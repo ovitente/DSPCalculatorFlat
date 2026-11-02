@@ -78,3 +78,14 @@ Agreed with the user on 2026-11-02 (grilling session). Each phase ends with a ch
 
 - Full missile turret 22.5 kit (bus/floorplan style) through the shared engine, each module
   self-reviewed with `blueprint-tools/tools-preview/RenderBp.exe` before it goes to the user.
+
+## Status (2026-11-02)
+
+- Phases 1-3 done; phase 4: lanes / Mk.III / lane split, spray coaters, lab towers, collider done (code-checked,
+  not yet pasted in game); phase 5 catalog written, waiting for the user's drawings.
+- 15 rules: generated and checked on the turret 7.5 - 4, 6, 7, 9, 11, 12, 13; partial - 1 (pitch 7), 5, 8 (2-way
+  splitters on small fixtures only); coded but off because the search router then finds no valid turret - 2/3
+  (`EdgeBus.Enabled`), 14 (`Rules.MarginInCompose`); not started - 10, 15. Rule checker: `Rules.Check`.
+- The search router still produces long perimeter loops (`docs/turret-7.5-engine-2026-11-02.png`, 48x30 vs the
+  user's 40x26). Remaining rules are expected to come from the pattern catalog rather than more search.
+- Selftest full: 83 pass / 0 fail / 1 skip (missing user file).
