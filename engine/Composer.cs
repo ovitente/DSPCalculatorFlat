@@ -114,6 +114,11 @@ public class Composer
     {
         Notes.Clear();
         Stopped = false;
+        // rules hook (engine\Rules.cs, rule 14): margin for zero-margin steps whose lane is split (mutates the plan, so the
+        // Validator's supply check sees the same machine counts)
+        // OFF by default (Rules.MarginInCompose): with it the turret 7.5 rows still got 3 copper / 1 coil machines and the coil
+        // route failed (validator: 'plan needs 4 machines for Copper Ingot, layout has 3'); the row split must learn the new counts first
+        if (Rules.Enabled && Rules.MarginInCompose) Notes.AddRange(Rules.ApplyMargin(plan));
         int attempts = 0;
         Tried best = null, bestOk = null;
         // compactness: every gap configuration / mode / route order / raise variant is tried; among the attempts without
@@ -190,6 +195,14 @@ public class Composer
                 bestOk.L = sys;
             }
             else Notes.Add("towers: systematic lattice placement not valid, keeping the greedy towers");
+            // rules hook (engine\Rules.cs, rule 13): drop towers whose coverage and links the others already give
+            if (Rules.Enabled)
+            {
+                var cut = new List<Bld>();
+                int nCut = Rules.PruneTowers(bestOk.L, cut);
+                if (nCut > 0 && !new Validator(gd, spec).Validate(bestOk.L, plan).Ok) { foreach (Bld t in cut) bestOk.L.Add(t); nCut = 0; }
+                if (nCut > 0) Notes.Add("rule 13: " + nCut + " redundant tower(s) removed");
+            }
             foreach (string rn in bestOk.A.RowNotes.Distinct()) Notes.Add("row " + rn);
             int nb = bestOk.L.All.Count(b => b.IsRaised), ns = bestOk.L.Count(Kind.Splitter, 0);
             if (nb > 0) Notes.Add("bridges: " + nb + " raised belt node(s), cell BRIDGE (game-proven, refs\\bridges-splitters-user.txt)");
@@ -216,6 +229,9 @@ public class Composer
         }
         // lanes hook (PLAN.md decision 8): cheapest belt/sorter tier per lane and sorter inside the caps
         if (bestOk != null && spec.CheapestTiers) Lanes.AssignTiers(gd, spec, best.L, plan, Notes);
+        // rules hook (engine\Rules.cs): report the layout against the user's 15 rules (measurable ones)
+        if (Rules.Enabled && plan.Steps.Count > 0 && plan.Steps[plan.Steps.Count - 1].Recipe != null)
+            Notes.AddRange(Rules.Report(Rules.Check(best.L, plan, plan.Steps[plan.Steps.Count - 1].Recipe.Id)));
         Desc = Describe(best.L, plan, spec, gd);
         return best.L;
     }

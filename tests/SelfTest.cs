@@ -13,6 +13,7 @@ public static partial class SelfTest
 {
     static int passed, failed, skipped;
     static partial void RunLabCases();   // feat-labs: implemented in SelfTestLabs.cs (SelfTest.exe only)
+    static partial void RunRuleCases();  // feat-rules: the user's 15 layout rules, implemented in SelfTestRules.cs (SelfTest.exe only)
     static string root, bpDir;
     static GameData gd;
     static Cells cells;
@@ -94,6 +95,7 @@ public static partial class SelfTest
         Case("micro lanes: 13 smelters (11.9 exact, 714/min) on 720/min Mk.II -> 2 parallel lanes of 7 + 6, side by side on the edge", MicroLanesSplit13);
         Case("micro lanes: 1000/min stone with Mk.III allowed -> one Mk.III lane; Mk.II cap -> 2 parallel Mk.II lanes; Mk.III records export", MicroLanesMk3);
         Case("micro lanes: dropped-step product lane = icon tail on the input edge (S and W); a lane off the edge fails", MicroLanesDroppedTail);
+        RunRuleCases();  // feat-rules: engine\Rules.cs against the user's game-proven turret edits (SelfTestRules.cs)
         RunLabCases();   // feat-labs: Matrix Lab towers, collider rows (SelfTestLabs.cs; partial method, absent in MakeBlock.exe)
         // spray coaters (engine\Coaters.cs, COATERS HOOK; cases in tests\SelfTestCoaters.cs)
         Case("micro coaters: 2-input final step incLevel 1 -> 2 coaters + 1 proliferator lane with icon tail, valid + export", MicroCoaters);
