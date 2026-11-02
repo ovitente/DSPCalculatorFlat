@@ -19,7 +19,31 @@ public static partial class SelfTest
         Case("micro rules: rule 14 margin on the turret 7.5 plan (coil 1 -> 2, copper 3 -> 4, iron 7, single-consumer steps unchanged)", MicroRulesMargin);
         Case("micro rules: useredit3 (game-proven) passes the hard rule checks 4, 6, 7, 12, 13, 14 and has the margin-rule machine counts", MicroRulesUserEdit3);
         Case("micro rules: engine v1 turret (before the user's edit) fails rules 6, 7, 12 (and has 3-way splitters, rule 8 metric)", MicroRulesEngineV1);
+        Case("micro rules: rule 7 inline buffer cell = useredit3 records #530, #27, #382, #381, #272, #42 (turret yaw 0, out N)", MicroRulesInlineDepot);
         Case("micro rules: rule 13 prunes useredit's 2 redundant towers (7 -> 5), coverage + links kept", MicroRulesTowers);
+    }
+
+    /// Rule 7 cell: Rules.InlineDepot at the turret of useredit3 reproduces records #530, #27, #382, #381, #272, #42.
+    static string MicroRulesInlineDepot()
+    {
+        var e = new Errs();
+        Layout l = UserFile(UserTurret3);
+        Bld fin = l.All.First(b => b.Kind == Kind.Machine && b.RecipeId == TurretRecipe);
+        Fragment f = Rules.InlineDepot(fin, Ids.SorterMk2, Ids.BeltMk2, TurretId);
+        e.Check(f != null && f.Blds.Count == 6, "cell has " + (f == null ? 0 : f.Blds.Count) + " buildings, expected 6");
+        if (f == null) return e.Result();
+        foreach (Bld b in f.Blds)
+        {
+            Bld m = l.All.FirstOrDefault(o => o.Kind == b.Kind && Near(o.X, b.X, 0.01) && Near(o.Y, b.Y, 0.01) && (b.Kind != Kind.Sorter || (Near(o.X2, b.X2, 0.01) && Near(o.Y2, b.Y2, 0.01))));
+            if (m == null) { e.L.Add("no record for " + b); continue; }
+            if (b.Kind == Kind.Sorter)
+                e.Check(m.SorterLength == b.SorterLength && m.InputFromSlot == b.InputFromSlot && m.OutputToSlot == b.OutputToSlot,
+                    "sorter " + b + ": L " + m.SorterLength + "/" + b.SorterLength + " slots in " + m.InputFromSlot + "/" + b.InputFromSlot + " out " + m.OutputToSlot + "/" + b.OutputToSlot);
+            if (b.Kind == Kind.Belt) e.Check(NearYaw(m.Yaw, b.Yaw, 0.5) && (m.Output == null) == (b.Output == null), "belt " + b + " yaw/link differs");
+        }
+        Bld turned = Bld.Machine(Ids.AsmMk1, 0, 0, 90, TurretRecipe);
+        e.Check(Rules.InlineDepot(turned, Ids.SorterMk2, Ids.BeltMk2, TurretId) == null, "unproven orientation (yaw 90) was built");
+        return e.Result();
     }
 
     static ProductionPlan TurretPlan(bool margin)

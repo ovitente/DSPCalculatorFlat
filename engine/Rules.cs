@@ -141,6 +141,29 @@ namespace DspFlat.Engine
             return removed;
         }
 
+        // ================================================================ rule 7: inline output buffer (cell)
+        /// Rule 7 cell (R7, useredit3, all numbers relative to the final machine, assembler yaw 0, output face N):
+        /// turret #274 (3,12) -> #530 L2 (0,+0.875)->(0,+3.205), machine slot 1 -> depot slot 7 -> Depot Mk.I #27 (0,+4)
+        /// -> #382 L1 (0,+4.795)->(0,+6), depot slot 1 -> belts #381 #272 #42 (0,+6)..(0,+8) flowing N, last one the chain
+        /// end (block output port "out:<item>"). Only this orientation is game-proven; other machine yaws / faces return
+        /// null (not derived). Not yet placed by the Composer (its final row still ends in an output lane + side buffer).
+        public static Fragment InlineDepot(Bld fin, int sorterItem, int beltItem, int carries)
+        {
+            if (fin == null || fin.Kind != Kind.Machine || Math.Abs(Dirs.Norm(fin.Yaw + 0.5) - 0.5) > 1.0) return null;
+            double x = fin.X, y = fin.Y;
+            var f = new Fragment("INLINE_DEPOT");
+            Bld dep = f.Add(Bld.Depot(x, y + 4));
+            Bld s1 = f.Add(Bld.Sorter(sorterItem, x, y + 0.875, x, y + 3.205, 0, fin, dep, 1, 2, 0, carries));
+            s1.OutputToSlot = 7;   // depot slot 7 (record #530)
+            var belts = new List<Bld>();
+            for (int i = 0; i < 3; i++) belts.Add(f.Add(Bld.Belt(beltItem, x, y + 6 + i, 0, carries, "out:" + carries)));
+            for (int i = 0; i < 2; i++) Layout.Link(belts[i], belts[i + 1], 1);
+            Bld s2 = f.Add(Bld.Sorter(sorterItem, x, y + 4.795, x, y + 6, 0, dep, belts[0], 1, 1, 0, carries));   // depot slot 1 (#382)
+            foreach (Bld b in f.Blds) b.Role = "rule 7 inline buffer";
+            f.AddPort(new Port { Name = "out:" + carries, Kind = PortKind.Out, X = (int)Math.Round(x), Y = (int)Math.Round(y + 8), Dir = Dir.N, Item = carries, Belt = belts[2], Chain = belts[2].Chain });
+            return f;
+        }
+
         // ================================================================ checks on a finished layout
         /// Face of a machine a sorter end touches (dominant axis of the end point relative to the machine centre).
         static Dir Face(Bld machine, double x, double y)
