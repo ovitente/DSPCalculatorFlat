@@ -644,7 +644,7 @@ public class Composer
                     // PACK HOOK (enginePacking.cs, rule 12): a one-machine consumer row takes from another consumer's lane end
                     var splitTails = new List<int[][]>();
                     if (packTails) { int[] dn = Packing.SplitTails(dem, s.MachinesExact, beltRate); for (int j = dem.Count - 1; j >= 0; j--) if (dn[j] >= 0) { int rt = Packing.Root(dn, j); dem[rt] += dem[j]; splitTails.Add(new[] { ded[j], ded[dn[j]], ded[rt] }); } for (int j = dem.Count - 1; j >= 0; j--) if (dn[j] >= 0) { dem.RemoveAt(j); ded.RemoveAt(j); } }
-                    if (dem.Count > 1 && s.Machines >= dem.Count && dem.All(d => d <= beltRate + 1e-9))
+                    if ((dem.Count > 1 || splitTails.Count > 0) && s.Machines >= dem.Count && dem.All(d => d <= beltRate + 1e-9))   // PACK HOOK: a single root row with tails stays dedicated
                     {
                         var counts = Apportion(s.Machines, dem.ToArray());
                         var insS = s.Inputs.Select((x, i) => new { x, i }).OrderByDescending(a => a.x.Rate).ThenBy(a => a.i).Select(a => a.x).ToList();
