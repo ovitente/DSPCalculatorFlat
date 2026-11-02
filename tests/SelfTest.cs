@@ -16,6 +16,7 @@ public static partial class SelfTest
     static partial void RunBus2Cases();  // EDGEBUS HOOK: rules 2/3 stacked edge bus, tests\SelfTestBus2.cs (SelfTest.exe only)
     static partial void RunRuleCases();  // feat-rules: the user's 15 layout rules, implemented in SelfTestRules.cs (SelfTest.exe only)
     static partial void RunFinalCases(); // FINALCELL HOOK: final machine cell (rules 4-7, 9, 11), tests/SelfTestFinal.cs (SelfTest.exe only)
+    static partial void RunPackCases();  // feat-rules-pack: packing rules 14/12/8, implemented in SelfTestPack.cs (SelfTest.exe only)
     static string root, bpDir;
     static GameData gd;
     static Cells cells;
@@ -100,6 +101,7 @@ public static partial class SelfTest
         RunBus2Cases();  // EDGEBUS HOOK: engine\EdgeBus.cs (SelfTestBus2.cs)
         RunRuleCases();  // feat-rules: engine\Rules.cs against the user's game-proven turret edits (SelfTestRules.cs)
         RunFinalCases(); // FINALCELL HOOK
+        RunPackCases();  // feat-rules-pack: engine\Packing.cs (SelfTestPack.cs)
         RunLabCases();   // feat-labs: Matrix Lab towers, collider rows (SelfTestLabs.cs; partial method, absent in MakeBlock.exe)
         // spray coaters (engine\Coaters.cs, COATERS HOOK; cases in tests\SelfTestCoaters.cs)
         Case("micro coaters: 2-input final step incLevel 1 -> 2 coaters + 1 proliferator lane with icon tail, valid + export", MicroCoaters);

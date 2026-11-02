@@ -67,6 +67,7 @@ public static class PlanMapper
         spec.InEdge = opt.InEdge; spec.OutEdge = opt.OutEdge; spec.Safe60 = opt.Safe60; spec.Buffer = opt.Buffer;
         spec.MaxRow = opt.MaxRow > 0 ? opt.MaxRow : 12;
         spec.ShortDesc = opt.ShortDesc; spec.Desc = opt.Desc;
+        spec.AddMargin = opt.AddMargin;   // PACK HOOK: rule 14 only for the engine's own plans
         spec.LabStackMax = opt.LabStackMax > 0 ? opt.LabStackMax : 15;   // feat-labs
         if (opt.OwnSupply != null) spec.OwnSupply.UnionWith(opt.OwnSupply);
         // COATERS HOOK: proliferator on the external proliferator lane (engine\Coaters.cs); inferred from the steps' inc
@@ -271,6 +272,7 @@ public static class PlanMapper
             o.InEdge = spec.InEdge; o.OutEdge = spec.OutEdge; o.Safe60 = spec.Safe60; o.Buffer = spec.Buffer;
             o.OwnSupply.AddRange(spec.OwnSupply); o.MaxRow = spec.MaxRow;
             o.ShortDesc = spec.ShortDesc; o.Desc = spec.Desc;
+            o.AddMargin = spec.AddMargin;   // PACK HOOK: CLI solver plan -> rule 14 margin
             o.LabStackMax = spec.LabStackMax;   // feat-labs
             o.ProliferatorItemId = spec.ProliferatorItem;
             o.TimeBudgetMs = 0;   // CLI: no hard limit, the composer keeps its per-mode-set budget (EngineTuning.ComposeBudgetMs)
