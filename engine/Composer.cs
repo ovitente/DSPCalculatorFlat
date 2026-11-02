@@ -74,7 +74,7 @@ public class Composer
         var r = new Tried { L = l, A = att, RowGap = rowGap, LineGap = lineGap, Strategy = strategy, Mode = mode, Raise = raise, Heavy = heavy, Prio = prio, Gaps = gaps };
         r.Score = l.Errors.Count + att.PowerProblems.Count;
         r.Name = "row gap " + rowGap + ", line gap " + lineGap + (gaps != null ? " (squeezed " + string.Join("/", gaps.Select(g => g.ToString(CultureInfo.InvariantCulture)).ToArray()) + ")" : "")
-            + ", route order " + strategy + ", " + ModeNames[mode & 3] + ((mode & 4) != 0 ? ", 3-4 input rows not stacked" : "") + ((mode & 8) != 0 ? ", line rows mirrored" : "") + ((mode & 16) != 0 ? ", feeds reversed" : "") + (raise ? ", raw rows raised to their consumers" : "") + (heavy ? ", heaviest feed stacked" : "")
+            + ", route order " + strategy + ", " + ModeNames[mode & 3] + ((mode & 4) != 0 ? ", 3-4 input rows not stacked" : "") + ((mode & 8) != 0 ? ", line rows mirrored" : "") + ((mode & 16) != 0 ? ", feeds reversed" : "") + ((mode & 32) != 0 ? ", no tail pickup" : "") + (raise ? ", raw rows raised to their consumers" : "") + (heavy ? ", heaviest feed stacked" : "")
             + (prio.Count > 0 ? ", " + prio.Count + " routes reordered" : "");
         if (r.Score == 0)
         {
@@ -116,9 +116,9 @@ public class Composer
         Stopped = false;
         // rules hook (engine\Rules.cs, rule 14): margin for zero-margin steps whose lane is split (mutates the plan, so the
         // Validator's supply check sees the same machine counts)
-        // OFF by default (Rules.MarginInCompose): with it the turret 7.5 rows still got 3 copper / 1 coil machines and the coil
-        // route failed (validator: 'plan needs 4 machines for Copper Ingot, layout has 3'); the row split must learn the new counts first
-        if (Rules.Enabled && Rules.MarginInCompose) Notes.AddRange(Rules.ApplyMargin(plan));
+        // PACK HOOK: only for the engine's own plans (spec.AddMargin: CLI solver); injected DSPCalculator plans keep the user's
+        // counts (LayoutOptions.AddMargin false). The grouped row split follows the raised counts (Packing.GroupCounts).
+        if (Rules.Enabled && Rules.MarginInCompose && spec.AddMargin) Notes.AddRange(Rules.ApplyMargin(plan));
         int attempts = 0;
         Tried best = null, bestOk = null;
         // compactness: every gap configuration / mode / route order / raise variant is tried; among the attempts without
@@ -134,8 +134,9 @@ public class Composer
         // bits 8/16 (user review: fewer crossings): line-start rows mirrored / producer lines visited in reverse entry order
         int[] grp = { 0, 4, 8, 12, 16, 20, 24, 28 };
         var modeSets = new List<int[]> { tall ? grp.Concat(new[] { 1, 5 }).ToArray() : grp, multi ? new[] { 2, 3 } : new[] { 2 } };
+        if (Packing.Enabled && multi) modeSets.Insert(1, modeSets[0].Select(m => m | 32).ToArray());   // PACK HOOK: pre-rules packing (3-way, own rows) only when tails find nothing valid
         int fm = EngineTuning.ForcedMode;   // debug: one row mode only
-        if (fm >= 0 && fm <= 31) modeSets = new List<int[]> { new[] { fm } };
+        if (fm >= 0 && fm <= 63) modeSets = new List<int[]> { new[] { fm } }; // PACK HOOK: bit 32
         foreach (int[] modes in modeSets)
         {
         if (bestOk != null || Halt()) break;
@@ -407,6 +408,8 @@ public class Composer
         /// grouped mode: the consumer rows this producer row feeds and the rate each one takes (1 = straight/stacked,
         /// 2-3 = one splitter, cell SPLIT); null in the older modes
         public List<KeyValuePair<RowInfo, double>> Feeds;
+        /// PACK HOOK (rules 8/12): consumer rows fed from the END of a fed row's input lane: (consumer, rate, donor row)
+        public List<Tuple<RowInfo, double, RowInfo>> TailFeeds;
     }
 
     class LineInfo
@@ -424,6 +427,7 @@ public class Composer
         public List<Bld> Run = new List<Bld>(); // connector belts (primary route)
         public bool Merge;                     // joins an earlier edge's route by a side merge
         public bool Done;                      // routed early (stacked link)
+        public RowInfo TailOf;                 // PACK HOOK: fed from the end of this row's input lane (serial pickup)
     }
 
     class Goal { public Dir? NextDir; public Dir? Entry; public Bld Target; public bool SideJoin; public bool NoBridgeLanding; }
@@ -456,6 +460,7 @@ public class Composer
         readonly bool grouped;        // modes 0/1: one consolidated producer row per consumer group (MakeRowsGrouped)
         readonly int capMachines;     // mode 1: single-consumer producer rows split into parts of at most this many machines
         readonly bool mirrorBase, reverseFeeds;   // mode bits 8/16
+        readonly bool packTails;      // PACK HOOK (engine\Packing.cs, rules 8/12): mode bit 32 clear = 2-way splitters + tail pickup
         readonly bool noStackMulti;   // mode bit 4: rows with 3-4 inputs start their own line (entries reachable from below)
         readonly HashSet<long> bridged = new HashSet<long>();   // tiles crossed by a bridge and its feet (no two-level crossing, no side-join)
         readonly bool raise;          // raw-only rows feeding another line move up toward their consumer
@@ -469,6 +474,7 @@ public class Composer
         {
             this.gd = gd; this.spec = spec; this.plan = plan; this.rowGap = rowGap; this.lineGap = lineGap; this.strategy = strategy;
             this.splitMode = (mode & 3) == 3; this.grouped = (mode & 3) <= 1; this.capMachines = (mode & 3) == 1 ? CapMachines : 0; this.noStackMulti = (mode & 4) != 0; this.mirrorBase = (mode & 8) != 0; this.reverseFeeds = (mode & 16) != 0;
+            this.packTails = Packing.Enabled && (mode & 32) == 0;   // PACK HOOK
             this.raise = raise; this.heavy = heavy; this.gapsAfter = gapsAfter;
             this.priority = priority ?? new HashSet<string>();
             double br = gd != null ? gd.BeltRate(spec.Tiers.Belt) : 0;
@@ -570,13 +576,18 @@ public class Composer
                 }
                 // lanes hook (PLAN.md decision 9): a group may only grow until one of its row's lanes is full at full speed
                 var groups = PackConsumers(slots, Lanes.GroupCap(gd, s, beltRate), spec.OwnSupply, x => x.Step.Item);
+                // PACK HOOK (engine\Packing.cs, rules 8/12): 2-way splitters + tail pickup instead of 3-way / own rows
+                List<PackGroup<RowInfo>> pg = packTails && slots.Count > 0 ? Packing.Pack(slots, Lanes.GroupCap(gd, s, beltRate), beltRate, spec.OwnSupply, x => x.Step.Item) : null;
+                if (pg != null) groups = pg.Select(x => x.All()).ToList();
                 if (slots.Count == 0) groups.Add(null);   // block output: rows by lane rate only
+                // PACK HOOK (engine\Packing.cs, rule 14): the groups together build Step.Machines (margin / user counts)
+                int[] packCounts = Packing.GroupCounts(s.Machines, s.MachinesExact, groups.Select(x => x == null ? 1.0 : x.Sum(y => y.Value) / totalOut).ToArray());
                 int partNo = 0;
                 foreach (var g in groups)
                 {
                     double gRate = g == null ? outRate : g.Sum(x => x.Value);
                     double share = g == null ? 1.0 : gRate / totalOut;
-                    int count = Math.Max(1, (int)Math.Ceiling(s.MachinesExact * share - 1e-9));
+                    int count = Packing.Enabled ? packCounts[groups.IndexOf(g)] : Math.Max(1, (int)Math.Ceiling(s.MachinesExact * share - 1e-9));   // PACK HOOK
                     if (g == null) count = s.Machines;
                     // parts: lane rate (block output rows) or the height cap (single-consumer rows)
                     int parts = 1;
@@ -595,7 +606,8 @@ public class Composer
                             Step = s, StepIndex = si, Part = partNo++, Count = cnt, Share = share * ps,
                             InItems = ins.Select(x => x.Item).ToArray(), InRates = ins.Select(x => x.Rate * share * ps).ToArray(),
                             OutRate = gRate * ps,
-                            Feeds = g == null ? null : g.Select(x => new KeyValuePair<RowInfo, double>(x.Key, x.Value * ps)).ToList()
+                            Feeds = g == null ? null : pg != null ? Packing.MainFeeds(pg[groups.IndexOf(g)], ps) : g.Select(x => new KeyValuePair<RowInfo, double>(x.Key, x.Value * ps)).ToList(),   // PACK HOOK
+                            TailFeeds = g == null || pg == null ? null : pg[groups.IndexOf(g)].Tails.Select(t => Tuple.Create(t.Key.Key, t.Key.Value * ps, t.Value)).ToList()   // PACK HOOK
                         };
                         r.Name = N(s.Item) + (groups.Count > 1 || parts > 1 ? " #" + partNo : "");
                         made.Add(r);
@@ -707,6 +719,8 @@ public class Composer
                     foreach (var p in prods)
                         foreach (var kv in p.Feeds)
                             edges.Add(new Edge { From = p, To = kv.Key, Item = s.Item, Rate = kv.Value });
+                    // PACK HOOK (rules 8/12): one tail edge per tail consumer (first producer part that has it)
+                    foreach (var p in prods) if (p.TailFeeds != null) foreach (var t in p.TailFeeds) if (!edges.Any(x => x.To == t.Item1 && x.Item == s.Item)) edges.Add(new Edge { From = p, To = t.Item1, Item = s.Item, Rate = t.Item2 * prods.Count, TailOf = t.Item3 });
                     continue;
                 }
                 if (prods.All(p => p.Dedicated != null))
@@ -732,7 +746,7 @@ public class Composer
                     }
                 }
             }
-            foreach (var g in edges.GroupBy(e => e.From))
+            foreach (var g in edges.Where(e => e.TailOf == null).GroupBy(e => e.From))   // PACK HOOK: tails take no splitter output
                 if (g.Count() > 3) { errors.Add("composer: " + g.Key.Name + " feeds " + g.Count() + " rows; splitters for more than 3 consumers are not supported yet"); }
         }
 
@@ -836,13 +850,13 @@ public class Composer
                 RowInfo bestP = null; LineInfo bestL = null;
                 bool rowHasRaw = r.InItems.Any(it => r.Step.IsExternal(plan, it)) || (noStackMulti && r.InItems.Length >= 3);   // raw lanes must start on the input edge
                 if (Coaters.Coated(r.Step) && spec.ProliferatorItem != 0) rowHasRaw = true;   // COATERS HOOK: never stacked (feed port below the row)
-                foreach (var e in edges.Where(e => e.To == r && !rowHasRaw))
+                foreach (var e in edges.Where(e => e.To == r && !rowHasRaw && e.TailOf == null))   // PACK HOOK: a tail row is never stacked on the producer
                 {
                     RowInfo p = e.From;
                     if (p.Frag == null || !lineOf.ContainsKey(p)) continue;
                     LineInfo l = lineOf[p];
                     if (l.Rows[l.Rows.Count - 1] != p) continue;
-                    if (edges.Count(x => x.From == p) != 1) continue;
+                    if (edges.Count(x => x.From == p && x.TailOf == null) != 1) continue;   // PACK HOOK: tails ride the consumer lane
                     // heavy: the heaviest feed is stacked (its lane continues straight, no route), ties the lower line;
                     // else the lowest producer line (shortest column), ties the heavier feed
                     double br = bestL == null ? -1 : edges.First(x => x.From == bestP && x.To == r).Rate;
@@ -901,9 +915,9 @@ public class Composer
             {
                 if (ordered.Contains(l)) return;
                 ordered.Add(l);
-                var feeds = edges.Where(e => l.Rows.Contains(e.To) && lineOf.ContainsKey(e.From) && lineOf[e.From] != l)
+                var feeds = edges.Where(e => l.Rows.Contains(e.To) && lineOf.ContainsKey(e.TailOf ?? e.From) && lineOf[e.TailOf ?? e.From] != l)
                     .OrderBy(e => { Port p = InPort(e.To, e.Item); return (p != null ? p.Y : 0) * (reverseFeeds ? -1 : 1); }).ThenByDescending(e => e.Rate).ToList();
-                foreach (var e in feeds) visit(lineOf[e.From]);
+                foreach (var e in feeds) visit(lineOf[e.TailOf ?? e.From]);   // PACK HOOK: a tail row sits next to its donor line
             };
             foreach (var l in lines.Where(l => l.Rows.Any(r => r.Step.Item == plan.TargetItem)).OrderBy(l => l.Order).ToList()) visit(l);
             foreach (var l in lines.OrderBy(l => l.Order)) visit(l);
@@ -977,6 +991,7 @@ public class Composer
         void BlockTiles()
         {
             var outBelts = new HashSet<Bld>(rows.Where(r => r.Frag != null).Select(r => PortBelt(OutPort(r))).Where(b => b != null));
+            foreach (var e in edges.Where(e => e.TailOf != null && e.TailOf.Frag != null)) { Port tp = Packing.LaneEnd(e.TailOf.Frag, e.Item); if (tp != null) outBelts.Add(tp.Belt); }   // PACK HOOK: tail sources
             foreach (var b in work.All)
             {
                 if (b.Kind == Kind.Sorter)
@@ -1123,7 +1138,7 @@ public class Composer
             foreach (var e in edgesOk)
             {
                 Port o = OutPort(e.From);
-                if (edgesOk.Count(x => x.From == e.From) != 1 || o.X != e.Target.X || o.Dir != e.Target.Dir || e.Target.Y <= o.Y) continue;
+                if (e.TailOf != null || edgesOk.Count(x => x.From == e.From && x.TailOf == null) != 1 || o.X != e.Target.X || o.Dir != e.Target.Dir || e.Target.Y <= o.Y) continue;   // PACK HOOK
                 e.Source = o;
                 reserved[K(o.NextX, o.NextY)] = tgtConn[e.Target];
                 RoutePortToPort(e, tgtConn[e.Target]);
@@ -1135,7 +1150,8 @@ public class Composer
                 RouteProduct(r, OutPort(r), srcConn[r]);
 
             // 1. splitters for producers with several consumer rows
-            foreach (var g in edgesOk.GroupBy(e => e.From).ToList())
+            foreach (var e in edgesOk.Where(x => x.TailOf != null)) { e.Source = Packing.LaneEnd(e.TailOf.Frag, e.Item); if (e.Source == null) errors.Add("composer: row " + e.TailOf.Name + " has no lane end for " + N(e.Item)); }   // PACK HOOK: serial pickup
+            foreach (var g in edgesOk.Where(x => x.TailOf == null).GroupBy(e => e.From).ToList())   // PACK HOOK: tails take no splitter output
             {
                 var list = g.ToList();
                 Port o = OutPort(g.Key);

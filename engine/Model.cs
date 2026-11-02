@@ -473,6 +473,9 @@ public class BlockSpec
     public int LabStackMax = 15;
     /// COATERS HOOK: proliferator item on the external proliferator lane (1141/1142/1143; 0 = none, engine\Coaters.cs).
     public int ProliferatorItem;
+    /// Rule 14 margin (Rules.ApplyMargin) inside Compose: true for the engine's own solver plans (CLI); PlanMapper copies
+    /// LayoutOptions.AddMargin (default false: a DSPCalculator plan's machine counts are authoritative). engine\Packing.cs.
+    public bool AddMargin = true;
 }
 
 // ------------------------------------------------------------------ plan (Solver output)

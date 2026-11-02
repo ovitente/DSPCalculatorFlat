@@ -30,9 +30,10 @@ namespace DspFlat.Engine
     {
         /// Switch for the generative rules (14 margin, 13 tower pruning). Off = the pre-rules engine behaviour.
         public static bool Enabled = true;
-        /// Rule 14 inside Composer.Compose. Off: the Composer's row split does not yet follow the raised counts (turret 7.5
-        /// failed validation with it on, 2026-11-02). ApplyMargin / CheckMargin work on a plan on their own.
-        public static bool MarginInCompose = false;
+        /// Rule 14 inside Composer.Compose (only when BlockSpec.AddMargin: the CLI solver's plans; injected DSPCalculator
+        /// plans keep the user's counts, LayoutOptions.AddMargin false). On since feat-rules-pack: the grouped row split
+        /// builds Step.Machines (engine\Packing.cs GroupCounts). ApplyMargin / CheckMargin also work on a plan on their own.
+        public static bool MarginInCompose = true;
 
         static string F(double v) { return v.ToString("0.##", CultureInfo.InvariantCulture); }
         static string At(double x, double y) { return "(" + F(x) + "," + F(y) + ")"; }
@@ -317,7 +318,10 @@ namespace DspFlat.Engine
                 {
                     int lane = lanes[ic];
                     int pick = sorters.Count(s => s.Input != null && s.Input.Kind == Kind.Belt && lanes.ContainsKey(s.Input) && lanes[s.Input] == lane && s.Output != null && s.Output.Kind == Kind.Machine);
-                    if (pick == 1) bad.Add("lane at " + At(ic.X, ic.Y) + " feeds 1 machine");
+                    // feat-rules-pack: only when another input lane of the same item exists (a main line to take it from);
+                    // the only lane of an item (e.g. one copper smelter for one circuit) is not a separate small input
+                    bool other = icons.Any(o => o != ic && o.Parameters[0] == ic.Parameters[0] && lanes[o] != lane);
+                    if (pick == 1 && other) bad.Add("lane at " + At(ic.X, ic.Y) + " feeds 1 machine");
                 }
                 r12.Ok = bad.Count == 0;
                 r12.Detail = icons.Count + " input lane(s)" + (r12.Ok ? ", none for a single machine" : ": " + string.Join(", ", bad.ToArray()));

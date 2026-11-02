@@ -111,6 +111,9 @@ public class LayoutOptions
     public List<int> OwnSupply = new List<int>();     // consumer items whose inputs get producer rows of their own
     public int MaxRow = 12;                           // kit mode limit (unused by Generate)
     public string ShortDesc, Desc;                    // header text override; null = generated
+    /// Rule 14 margin (engine\Packing.cs): add a machine to zero-margin steps that feed 2+ consumers. false (default) for
+    /// injected DSPCalculator plans: the user's machine counts are authoritative; the CLI sets true (its own solver plan).
+    public bool AddMargin;
 }
 
 // ------------------------------------------------------------------ output
