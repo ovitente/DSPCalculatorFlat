@@ -91,9 +91,13 @@ public class Cells
         // lanes (PLAN.md decision 8): Sorter Mk.III = a real record of the user's COL-PAIR-3 template (in3 #3, the source
         // of the A2 in3 sorter cells); its geometry is checked by CheckSorterTable, the item here
         CellItem("sorter-mk3", Ids.SorterMk3, "in3", 3, "template", "Sorter Mk.III record of the COL-PAIR-3 template");
+        // feat-labs: tower base of the user's 4-sci\bluematrix.txt (recipe 9, params [1,0]) and the Deuterium collider of
+        // the community Green Science + Proliferator blueprint (recipe 40, params [0])
+        Cell("lab", Ids.MatrixLab, LabTowers.SourceKey, 557, 53, 8, "game", "Matrix Lab tower base (z 0), 6-high tower");
+        Cell("collider", Ids.Collider, Collider.SourceKey, 903, 77, 4, "template", "community blueprint, not built by the user");
         // generic prototype per item id (first registration wins; splitter-belt/belt-icon/priority are named-only)
         foreach (string n in new[] { "smelter-arc", "sorter-mk2", "belt-mk2", "tesla", "depot-mk1", "asm-mk1", "asm-mk2", "asm-mk3",
-                                     "smelter-plane", "belt-mk1", "sorter-mk1", "splitter", "sorter-mk3" })
+                                     "smelter-plane", "belt-mk1", "sorter-mk1", "splitter", "sorter-mk3", "lab", "collider" })
             if (ByName.ContainsKey(n) && !byItem.ContainsKey(ByName[n].ItemId)) byItem[ByName[n].ItemId] = n;
 
         foreach (var kv in ByName) Prototypes.Add(kv.Key, GameBp.ToRecord(kv.Value.Proto));
@@ -104,7 +108,48 @@ public class Cells
         CheckParams("splitter-priority", new[] { 1, 0, 0, 0, 0, 0 });
         CheckParams("belt-icon", new[] { Ids.CopperOre, 0 });
         CheckSorterTable();
+        CheckSlotRowCells();
         CheckBeltAndSplitter();
+    }
+
+    /// feat-labs: re-reads every lab / collider sorter cell (SlotRows) from its source blueprint: geometry, belt tile,
+    /// slot, length, sorter yaw, and the slot table of the engine (SlotRows.SlotFor) agrees with the stored slot.
+    /// Lab tower stacking (z step, inputObj = lab below) is checked on the tower of the lab prototype.
+    void CheckSlotRowCells()
+    {
+        int ok = 0;
+        foreach (SlotRowDef d in SlotRows.Defs())
+            foreach (SorterGeo g in d.Sources)
+            {
+                object s = Record(g.SourceKey, g.SourceIndex, "slot-row cell " + g.Name);
+                if (s == null) continue;
+                string bad = CompareSorter(g, s, false);
+                if (bad == null)
+                {
+                    var m = Bld.Machine(g.MachineItem, 0, 0, g.MachineYaw, 0);
+                    var so = new Bld { Kind = Kind.Sorter, X = g.Sx, Y = g.Sy, X2 = g.Ex, Y2 = g.Ey };
+                    int want;
+                    if (!SlotRows.SlotFor(m, so, g.BeltToMachine, out want) || want != g.Slot) bad = "slot table gives " + want + ", record " + g.Slot;
+                }
+                if (bad != null) Errors.Add("slot-row cell " + g.Name + " (" + g.Source + "): " + bad); else ok++;
+            }
+        Log.Add("lab / collider sorter cells checked against their blueprints: " + ok + " ok");
+        // tower of #557 in 4-sci\bluematrix.txt: #577 z 3 -> #367 z 6 -> #467 z 9 -> #470 z 12 -> #663 z 15
+        var src = Source(LabTowers.SourceKey);
+        if (src == null) return;
+        int[] chain = { 557, 577, 367, 467, 470, 663 };
+        for (int i = 1; i < chain.Length; i++)
+        {
+            object up, below;
+            if (!src.TryGetValue(chain[i], out up) || !src.TryGetValue(chain[i - 1], out below)) { Errors.Add("lab tower: record missing in " + LabTowers.SourceFile); return; }
+            if (GameBp.Get(up, "inputObj") != below || Math.Abs(GameBp.Fl(up, "localOffset_z") - GameBp.Fl(below, "localOffset_z") - LabTowers.LevelZ) > 0.01
+                || GameBp.In(up, "outputToSlot") != LabTowers.SlotOutTo || GameBp.In(up, "inputFromSlot") != LabTowers.SlotInFrom
+                || GameBp.In(up, "outputFromSlot") != LabTowers.SlotOutFrom || GameBp.In(up, "inputToSlot") != LabTowers.SlotInTo)
+                Errors.Add("lab tower: #" + chain[i] + " is not stacked on #" + chain[i - 1] + " as LabTowers assumes (z step " + LabTowers.LevelZ + ", inputObj, slots 14/15/15/14)");
+            int[] p = (int[])GameBp.Get(up, "parameters");
+            if (p == null || p.Length < 2 || p[0] != LabTowers.ProductionParameters[0] || p[1] != LabTowers.ProductionParameters[1]) Errors.Add("lab tower: #" + chain[i] + " parameters differ from [1,0]");
+        }
+        Log.Add("lab tower stacking checked on " + LabTowers.SourceFile + " #557..#663");
     }
 
     // ---- source access ----
@@ -225,7 +270,10 @@ public class Cells
         Log.Add("sorter cells checked against their blueprints: " + ok + " ok");
     }
 
-    static string CompareSorter(SorterGeo g, object s)
+    static string CompareSorter(SorterGeo g, object s) { return CompareSorter(g, s, true); }
+
+    /// squareSlots: also check the slot against Geo.SlotAt (3x3 smelter/assembler table); false for labs / colliders.
+    static string CompareSorter(SorterGeo g, object s, bool squareSlots)
     {
         if (!Ids.IsSorter(GameBp.In(s, "itemId"))) return "record is item " + GameBp.In(s, "itemId") + ", not a sorter";
         object i = GameBp.Get(s, "inputObj"), o = GameBp.Get(s, "outputObj");
@@ -245,7 +293,7 @@ public class Cells
             if (Math.Abs(got[k] - want[k]) > 0.01) return "geometry (" + F(got[0]) + "," + F(got[1]) + ")->(" + F(got[2]) + "," + F(got[3]) + ")";
         int slot = toM ? GameBp.In(s, "outputToSlot") : GameBp.In(s, "inputFromSlot");
         if (slot != g.Slot) return "slot " + slot;
-        if (Geo.SlotAt(g.MachineYaw, toM ? g.Ex : g.Sx, toM ? g.Ey : g.Sy, g.Face) != g.Slot) return "slot " + g.Slot + " disagrees with Geo.SlotAt";
+        if (squareSlots && Geo.SlotAt(g.MachineYaw, toM ? g.Ex : g.Sx, toM ? g.Ey : g.Sy, g.Face) != g.Slot) return "slot " + g.Slot + " disagrees with Geo.SlotAt";
         int len = ((int[])GameBp.Get(s, "parameters"))[0];
         if (len != g.Length) return "length " + len;
         double syaw = GameBp.Fl(s, "yaw");

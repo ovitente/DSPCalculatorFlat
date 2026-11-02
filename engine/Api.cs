@@ -101,7 +101,7 @@ public class LayoutOptions
     public int SorterItemMax = 2012;    // 2011/2012/2013/2014 cap (pile sorter not supported yet: clamped to Mk.III)
     /// Cheapest belt/sorter tier per lane / sorter inside the caps (PLAN.md decision 8); false = everything at the caps.
     public bool CheapestTiers = true;
-    public int LabStackMax = 15;        // vertical construction tech cap (labs not placed yet)
+    public int LabStackMax = 15;        // vertical construction tech cap: Matrix Lab tower height (labs in one stack)
     public int TimeBudgetMs = 60000;
     public int ProliferatorItemId = 0;  // 1141/1142/1143; 0 = none
     // ---- engine extensions (defaults = the calculator addon's behaviour; the CLI maps its flags here) ----

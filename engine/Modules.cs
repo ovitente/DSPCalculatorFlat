@@ -37,6 +37,7 @@ public class RowSpec
     /// 60 deg latitude is used (colliders.json minIntegerPitchEW_upTo60deg).
     public bool AlongEW, Safe60;
     public int FinalQuarters;                 // quarter turns applied after MachineRow (machine yaw in the blueprint)
+    public int LabStackMax = 15;              // feat-labs: Matrix Lab tower height cap (SlotRows / LabTowers)
     public readonly List<string> Problems = new List<string>();  // filled by MachineRow: copy into Layout.Errors
     public readonly List<string> Notes = new List<string>();     // filled by MachineRow: informational
 }
@@ -63,6 +64,8 @@ public static class Modules
     public static Fragment MachineRow(RowSpec spec)
     {
         if (spec == null) throw new ArgumentNullException("spec");
+        // hook (feat-labs): Matrix Lab towers and Miniature Particle Collider rows have their own cell tables (SlotRows.cs)
+        if (SlotRows.Handles(spec.MachineItem)) return SlotRows.Row(spec);
         if (spec.Count < 1) throw new ArgumentException("row " + spec.Name + ": Count must be >= 1");
         if (spec.InputItems == null || spec.InputItems.Length < 1 || spec.InputItems.Length > 4)
             throw new ArgumentException("row " + spec.Name + ": 1..4 input items required");

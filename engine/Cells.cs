@@ -161,6 +161,10 @@ public static class Geo
         { "mk3", @"t-tpl\Assemblers mk III.txt" },
         { "plane", @"2-smelt\Smelters.txt" },
         { "fuel", @"5-chem\Fuel.txt" },
+        // feat-labs: Matrix Lab tower cells (LabTowers.cs) and Miniature Particle Collider cells (Collider.cs)
+        { LabTowers.SourceKey, LabTowers.SourceFile },
+        { Collider.SourceKey, Collider.SourceFile },
+        { Collider.SourceKey2, Collider.SourceFile2 },
     };
 
     static Dictionary<string, SorterGeo> table;

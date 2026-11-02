@@ -87,6 +87,11 @@ public class Validator
         bool beltGraphOk = true;
         public readonly Dictionary<Bld, double> Loads = new Dictionary<Bld, double>();   // lanes hook
         public readonly Dictionary<Bld, double> Needs = new Dictionary<Bld, double>();   // lanes hook
+        // feat-labs: Matrix Lab towers (LabTowers.cs) - upper levels take no sorters and no tile; a base lab's sorters
+        // carry the whole tower
+        HashSet<Bld> upperLabs = new HashSet<Bld>();
+        Dictionary<Bld, int> towerSize = new Dictionary<Bld, int>();
+        int TowerSize(Bld m) { int n; return towerSize.TryGetValue(m, out n) ? n : 1; }
 
         public Run(GameData gd, BlockSpec spec, Layout layout, ProductionPlan plan, ValidationReport report)
         {
@@ -114,6 +119,7 @@ public class Validator
             Splitters();
             Bridges();
             Recipes();
+            LabTowers.Validate(L.All, spec, R.Fail, R.Note);   // feat-labs
             Items();
             Flow();
             Ports();
@@ -196,6 +202,7 @@ public class Validator
             machines = L.All.Where(b => b.Kind == Kind.Machine).ToList();
             towers = L.All.Where(b => b.Kind == Kind.Tesla).ToList();
             splitters = L.All.Where(b => b.Kind == Kind.Splitter).ToList();
+            LabTowers.Index(L.All, out upperLabs, out towerSize);   // feat-labs
             foreach (Bld b in L.All)
             {
                 if (b.Kind == Kind.Belt && !Ids.IsBelt(b.ItemId)) R.Fail("belt record with non-belt item " + b);
@@ -287,7 +294,7 @@ public class Validator
             var list = new List<KeyValuePair<Bld, double[]>>();
             foreach (Bld b in L.All)
             {
-                if (b.Kind == Kind.Sorter || splitterTouch.Contains(b) || b.IsRaised) continue;
+                if (b.Kind == Kind.Sorter || splitterTouch.Contains(b) || b.IsRaised || upperLabs.Contains(b)) continue;   // feat-labs: upper levels = base footprint
                 MachineDef md = gd.Machine(b.ItemId);
                 if (md == null || md.FootprintTiles == null || md.FootprintTiles.Length != 2) { R.Fail("collider check: no game collider size for item " + b.ItemId + " at " + At(b.X, b.Y)); continue; }
                 int q = (int)Math.Round(Dirs.Norm(b.Yaw) / 90.0) % 4;
@@ -707,7 +714,7 @@ public class Validator
         void Sorters()
         {
             var usedSlots = new HashSet<string>();
-            var obstacles = L.All.Where(b => b.Kind == Kind.Machine || b.Kind == Kind.Tesla || b.Kind == Kind.Splitter || b.Kind == Kind.Storage).ToList();
+            var obstacles = L.All.Where(b => (b.Kind == Kind.Machine && !upperLabs.Contains(b)) || b.Kind == Kind.Tesla || b.Kind == Kind.Splitter || b.Kind == Kind.Storage).ToList();
             var roles = new SortedDictionary<string, int>();
             foreach (Bld s in sorters)
             {
@@ -753,10 +760,15 @@ public class Validator
                 // machine slot from geometry, belt side -1, one sorter per machine slot
                 int slot = toMachine ? s.OutputToSlot : s.InputFromSlot;
                 int[] msz = fp.Size(mach.ItemId);
+                int wantS;
                 if (msz[0] == 3 && msz[1] == 3)
                 {
                     int want = SlotAt(mach, s, toMachine);
                     if (slot != want) R.Fail("sorter slot " + slot + " but geometry says " + want + at);
+                }
+                else if (SlotRows.SlotFor(mach, s, toMachine, out wantS))   // feat-labs: lab / collider slot tables
+                {
+                    if (slot != wantS) R.Fail("sorter slot " + slot + " but the " + mach.ItemId + " slot table says " + wantS + at);
                 }
                 else R.Warn("slot table unknown for machine " + mach.ItemId + " (not 3x3), slot " + slot + " not checked" + at);
                 if (slot < 0 || slot > 11) R.Fail("sorter machine slot " + slot + " outside 0..11" + at);
@@ -929,23 +941,27 @@ public class Validator
             Step st; if (stepOf.TryGetValue(m, out st) && st.Speed > 0) return st.Speed;
             return gd != null ? gd.Speed(m.ItemId) : 1;
         }
+        /// Items/min one machine (a lab tower base: its whole tower, feat-labs) must move for the item.
+        double MachineRate(Bld m, int item, bool output) { return MachineRate1(m, item, output) * TowerSize(m); }
+        double FullRate(Bld m, int item, bool output) { return FullRate1(m, item, output) * TowerSize(m); }
+
         /// Items/min one machine must move for the item: plan rate shared over the placed machines, else full speed.
-        double MachineRate(Bld m, int item, bool output)
+        double MachineRate1(Bld m, int item, bool output)
         {
             RecipeDef rd = gd != null ? gd.Recipe(m.RecipeId) : null;
             if (rd == null) return 0;
             // per-row load set by the Composer/Kit: the same formula as the row's port rates (row rate = sum of its
             // machines' rates), so a small extra row (e.g. 1 smelter for gear 45/min) is not judged at the step average
-            if (m.Load > 0) return FullRate(m, item, output) * m.Load;
+            if (m.Load > 0) return FullRate1(m, item, output) * m.Load;
             Step st; int c;
             if (stepOf.TryGetValue(m, out st) && placed.TryGetValue(st, out c) && c > 0)
             {
                 ItemRate ir = (output ? st.Outputs : st.Inputs).FirstOrDefault(x => x.Item == item);
                 if (ir != null) return ir.Rate / c;
             }
-            return FullRate(m, item, output);
+            return FullRate1(m, item, output);
         }
-        double FullRate(Bld m, int item, bool output)
+        double FullRate1(Bld m, int item, bool output)
         {
             RecipeDef rd = gd != null ? gd.Recipe(m.RecipeId) : null;
             if (rd == null || rd.TimeSec <= 0) return 0;
@@ -983,7 +999,7 @@ public class Validator
             foreach (Bld m in machines)
             {
                 RecipeDef rd = gd != null ? gd.Recipe(m.RecipeId) : null;
-                if (rd == null) continue;
+                if (rd == null || upperLabs.Contains(m)) continue;   // feat-labs: upper levels are fed by the stack
                 string at = " at " + At(m.X, m.Y);
                 var ins = Peek(inSorters, m);
                 foreach (ItemCount need in rd.Inputs)

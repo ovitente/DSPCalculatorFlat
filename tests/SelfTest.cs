@@ -9,9 +9,10 @@ using System.Text;
 using DspFlat.Engine;
 using DspFlat.Host;
 
-public static class SelfTest
+public static partial class SelfTest
 {
     static int passed, failed, skipped;
+    static partial void RunLabCases();   // feat-labs: implemented in SelfTestLabs.cs (SelfTest.exe only)
     static string root, bpDir;
     static GameData gd;
     static Cells cells;
@@ -93,6 +94,7 @@ public static class SelfTest
         Case("micro lanes: 13 smelters (11.9 exact, 714/min) on 720/min Mk.II -> 2 parallel lanes of 7 + 6, side by side on the edge", MicroLanesSplit13);
         Case("micro lanes: 1000/min stone with Mk.III allowed -> one Mk.III lane; Mk.II cap -> 2 parallel Mk.II lanes; Mk.III records export", MicroLanesMk3);
         Case("micro lanes: dropped-step product lane = icon tail on the input edge (S and W); a lane off the edge fails", MicroLanesDroppedTail);
+        RunLabCases();   // feat-labs: Matrix Lab towers, collider rows (SelfTestLabs.cs; partial method, absent in MakeBlock.exe)
         Console.WriteLine("selftest: " + passed + " passed, " + failed + " failed, " + skipped + " skipped");
         return failed == 0 && skipped == 0 ? 0 : 1;
     }

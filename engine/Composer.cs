@@ -732,7 +732,8 @@ public class Composer
                 LaneIcons = false,  // rule 5 icons are set by RouteRaw on block input chains only
                 TailItems = r.InItems.Where(it => r.Step.IsExternal(plan, it)).ToArray(),   // raw lanes start with a tail
                 Data = gd,          // per-sorter throughput check, collider pitch
-                FinalQuarters = quarters, AlongEW = quarters % 2 == 1, Safe60 = spec.Safe60
+                FinalQuarters = quarters, AlongEW = quarters % 2 == 1, Safe60 = spec.Safe60,
+                LabStackMax = spec.LabStackMax   // feat-labs: lab tower height cap
             };
             Fragment f;
             try { f = Modules.MachineRow(rs); }

@@ -302,6 +302,10 @@ public class Footprints
     /// Occupied tile rectangle of a building (rotation-aware; centered on its tile for odd sizes).
     public Rect TileRect(Bld b)
     {
+        // hook (feat-labs, SlotRows.cs): stacked Matrix Labs occupy no tile of their own; the Miniature Particle Collider
+        // footprint is off its centre (exact collider boxes)
+        Rect special;
+        if (SlotRows.TileRect(gd, b, out special)) return special;
         int[] s = Size(b.ItemId);
         if (s[0] == 0 || IsSplitterTouch(b) || b.IsRaised) return Rect.Empty;
         int q = (int)Math.Round(Dirs.Norm(b.Yaw) / 90.0) % 4;
@@ -464,6 +468,8 @@ public class BlockSpec
     public bool CheapestTiers;
     /// Belt/sorter tiers without a prototype record (FlatEngine fills it from PrototypeCells): never chosen.
     public HashSet<int> MissingTiers = new HashSet<int>();
+    /// Matrix Lab tower height cap (vertical construction tech; LayoutOptions.LabStackMax). feat-labs.
+    public int LabStackMax = 15;
 }
 
 // ------------------------------------------------------------------ plan (Solver output)

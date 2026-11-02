@@ -146,7 +146,13 @@ fails if a core file uses `System.IO`, `Console.`, `Environment.`, `CurrentCultu
   (`output * time / (outCount * 60 * MachineCount)`), so the layout carries exactly the plan's rates.
 - **`EngineResult`** extensions for hosts: `GameVersion`, `Header` (`BpHeader`), `Notes` (composer notes), `Plan` (the
   internal `ProductionPlan`), `Layout` (abstract layout, `Bld.Index` = record index), `Report` (validator report).
-- **Unsupported steps** (`StepSupport.WhyNot`): building not in {2302, 2315, 2303, 2304, 2305}, or a recipe with more
+- **Labs and colliders** (feat-labs): Matrix Lab (2901) steps become rows of lab towers (`engine/LabTowers.cs`; height =
+  min(`LabStackMax`, what ONE base sorter per input and the one output sorter carry at full speed), more, lower towers
+  when a sorter is short), Miniature Particle Collider (2310) steps become collider rows (`engine/Collider.cs`). Both
+  are laid out by `engine/SlotRows.cs` from sorter cells of real blueprints (cited per cell; checked on load by the CLI
+  host, `GameCells.CheckSlotRowCells`). Self-evolution Lab (2902), Universe Matrix (6 inputs) and byproduct recipes
+  (Mass-energy Storage) stay dropped.
+- **Unsupported steps** (`StepSupport.WhyNot`): building not in {2302, 2315, 2303, 2304, 2305, 2901, 2310}, or a recipe with more
   than one output, or a step whose product is in `ExternalItems` -> dropped with a warning, its products become input
   lanes. Steps that only fed dropped steps are removed too (warning "removed: nothing left in the block consumes X").
   A dropped target, two steps for one item, unknown recipes and recipe cycles are errors.
