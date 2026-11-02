@@ -228,6 +228,7 @@ namespace DspFlat.Engine
             {
                 int z05 = l.All.Count(b => b.Kind == Kind.Belt && b.Z > 0.25 && b.Z < 0.75), z1 = l.All.Count(b => b.Kind == Kind.Belt && b.Z >= 0.75);
                 res.Add(new RuleResult { Rule = 2, Detail = "stacked bus: " + z05 + " belt nodes at z 0.5, " + z1 + " at z 1 (useredit3: one edge bus, 3 lanes on one row)" });
+                res.Add(EdgeBus.Measure(l));   // EDGEBUS HOOK: rule 3 metric (nested tiers of the stacked edge bus)
             }
             if (fin == null)
             {
