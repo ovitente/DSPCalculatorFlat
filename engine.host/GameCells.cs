@@ -47,10 +47,16 @@ public class Cells
 
     /// Loads prototypes from blueprintDir (Documents\Dyson Sphere Program\Blueprint) and self-checks them.
     /// Never throws on a mismatch: problems go to Errors.
-    public static Cells Load(string blueprintDir)
+    public static Cells Load(string blueprintDir) { return Load(blueprintDir, null); }
+
+    /// Load with game data: also provides the Mk.III belt prototype (derived from the Mk.II record with the game's
+    /// model index, after checking that the Mk.I and Mk.II records differ only by item id and model index). Without
+    /// game data there is no Mk.III belt prototype and the engine keeps belts at Mk.II at most (Lanes.ClampToPrototypes).
+    public static Cells Load(string blueprintDir, GameData gd)
     {
         var c = new Cells();
         c.BlueprintDir = blueprintDir;
+        c.data = gd;
         if (!GameBp.Ready) { c.Errors.Add("Cells.Load: GameBp.Init was not called"); return c; }
         try { c.LoadAll(); }
         catch (Exception e) { c.Errors.Add("Cells.Load: " + (e.InnerException ?? e).Message); }
@@ -82,13 +88,17 @@ public class Cells
         Cell("splitter-priority", Ids.Splitter, "split", 2, 7, 20, "game", "params [1,0,0,0,0,0]");
         Cell(SplitterGeo.BeltCell, Ids.BeltMk2, "split", 10, 7, 0.199, "game", "fractional belt next to a splitter");
         Cell("belt-icon", Ids.BeltMk2, "lent", 0, 2, 0, "game", "input-belt icon [1002,0] (rule 5)");
+        // lanes (PLAN.md decision 8): Sorter Mk.III = a real record of the user's COL-PAIR-3 template (in3 #3, the source
+        // of the A2 in3 sorter cells); its geometry is checked by CheckSorterTable, the item here
+        CellItem("sorter-mk3", Ids.SorterMk3, "in3", 3, "template", "Sorter Mk.III record of the COL-PAIR-3 template");
         // generic prototype per item id (first registration wins; splitter-belt/belt-icon/priority are named-only)
         foreach (string n in new[] { "smelter-arc", "sorter-mk2", "belt-mk2", "tesla", "depot-mk1", "asm-mk1", "asm-mk2", "asm-mk3",
-                                     "smelter-plane", "belt-mk1", "sorter-mk1", "splitter" })
+                                     "smelter-plane", "belt-mk1", "sorter-mk1", "splitter", "sorter-mk3" })
             if (ByName.ContainsKey(n) && !byItem.ContainsKey(ByName[n].ItemId)) byItem[ByName[n].ItemId] = n;
 
         foreach (var kv in ByName) Prototypes.Add(kv.Key, GameBp.ToRecord(kv.Value.Proto));
         foreach (var kv in byItem) Prototypes.SetDefault(kv.Key, kv.Value);
+        DeriveBeltMk3();
 
         CheckParams("splitter", new[] { 0, 0, 0, 0, 0, 0 });
         CheckParams("splitter-priority", new[] { 1, 0, 0, 0, 0, 0 });
@@ -142,6 +152,52 @@ public class Cells
         ByName[name] = new UnitCell { Name = name, SourceFile = Geo.SourceFiles[key].Split('|')[0], Index = idx, ItemId = item, X = x, Y = y,
             Proto = r, Status = status, Note = note };
         Log.Add("cell " + name + " = " + key + " #" + idx + " item " + item + " ok");
+    }
+
+    GameData data;
+
+    /// Like Cell, but checks the item id (and the game's model index when game data is known) instead of a position.
+    void CellItem(string name, int item, string key, int idx, string status, string note)
+    {
+        object r = Record(key, idx, "cell " + name);
+        if (r == null) return;
+        int it = GameBp.In(r, "itemId"), model = GameBp.In(r, "modelIndex");
+        MachineDef md = data != null ? data.Machine(item) : null;
+        if (it != item || (md != null && md.ModelIndex != model))
+        {
+            Errors.Add("prototype " + name + " mismatch: " + key + " #" + idx + " is item " + it + " model " + model + ", expected " + item
+                + (md != null ? " model " + md.ModelIndex : ""));
+            return;
+        }
+        float rx = GameBp.Fl(r, "localOffset_x"), ry = GameBp.Fl(r, "localOffset_y");
+        ByName[name] = new UnitCell { Name = name, SourceFile = Geo.SourceFiles[key].Split('|')[0], Index = idx, ItemId = item, X = rx, Y = ry,
+            Proto = r, Status = status, Note = note };
+        Log.Add("cell " + name + " = " + key + " #" + idx + " item " + item + " model " + model + " at " + F(rx) + "," + F(ry) + " ok");
+    }
+
+    /// Belt Mk.III prototype (lanes, PLAN.md decision 8). No Mk.III belt record exists in the user's blueprints, so the
+    /// record is the Mk.II one with the game's Mk.III item id and model index (game-data.json buildings: 2003 -> 37).
+    /// Done only when the facts behind it hold: the Mk.I and Mk.II records differ in nothing but position/orientation,
+    /// links, parameters, item id and model index, and their model indices equal game-data.json's. Otherwise no
+    /// Mk.III belt prototype (logged): Lanes.ClampToPrototypes keeps belts at Mk.II at most.
+    void DeriveBeltMk3()
+    {
+        BpBuilding b1 = Prototypes.Proto("belt-mk1"), b2 = Prototypes.Proto("belt-mk2");
+        MachineDef m1 = data != null ? data.Machine(Ids.BeltMk1) : null, m2 = data != null ? data.Machine(Ids.BeltMk2) : null, m3 = data != null ? data.Machine(Ids.BeltMk3) : null;
+        string why = null;
+        if (b1 == null || b2 == null) why = "belt Mk.I/Mk.II prototypes missing";
+        else if (m1 == null || m2 == null || m3 == null || m3.ModelIndex <= 0) why = "no game data for the belt model indices";
+        else if (b1.modelIndex != m1.ModelIndex || b2.modelIndex != m2.ModelIndex) why = "belt model indices " + b1.modelIndex + "/" + b2.modelIndex + " differ from game data " + m1.ModelIndex + "/" + m2.ModelIndex;
+        else if (b1.pitch != b2.pitch || b1.pitch2 != b2.pitch2 || b1.tilt != b2.tilt || b1.tilt2 != b2.tilt2 || b1.recipeId != b2.recipeId
+            || b1.filterId != b2.filterId || b1.areaIndex != b2.areaIndex || (b1.content ?? "") != (b2.content ?? "")
+            || (b1.parameters == null) != (b2.parameters == null) || (b1.parameters != null && b1.parameters.Length != b2.parameters.Length))
+            why = "belt Mk.I and Mk.II records differ in more than item id and model index";
+        if (why != null) { Log.Add("belt-mk3: not provided (" + why + "), belts stay at Mk.II at most"); return; }
+        BpBuilding b3 = b2.Clone();
+        b3.itemId = (short)Ids.BeltMk3; b3.modelIndex = (short)m3.ModelIndex;
+        Prototypes.Add("belt-mk3", b3);
+        Prototypes.SetDefault(Ids.BeltMk3, "belt-mk3");
+        Log.Add("belt-mk3 = belt-mk2 record with item " + Ids.BeltMk3 + " model " + m3.ModelIndex + " (Mk.I/Mk.II records differ only by item/model)");
     }
 
     void CheckParams(string name, int[] want)
@@ -261,10 +317,9 @@ public class Cells
     static string F(double v) { return v.ToString("0.###", CultureInfo.InvariantCulture); }
 
     /// Generic prototype record for a building item id (belt, sorter, machine, tesla, splitter); null if none.
-    /// Mk.III belt/sorter (2003/2013) are never provided (user rule 4).
+    /// (Game-object side; the derived Mk.III belt exists only as an engine record in Prototypes.)
     public object ProtoFor(int itemId)
     {
-        if (itemId == Ids.BeltMk3 || itemId == Ids.SorterMk3) return null;
         string n;
         UnitCell u;
         return byItem.TryGetValue(itemId, out n) && ByName.TryGetValue(n, out u) ? u.Proto : null;

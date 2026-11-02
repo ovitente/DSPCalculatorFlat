@@ -23,9 +23,17 @@ public class Validator
     {
         var report = new ValidationReport();
         if (layout == null) { report.Fail("no layout"); return report; }
-        new Run(gd, spec, layout, plan, report).All();
+        var run = new Run(gd, spec, layout, plan, report);
+        run.All();
+        BeltLoads = run.Loads; SorterNeeds = run.Needs;   // lanes hook (Lanes.AssignTiers)
         return report;
     }
+
+    // ---- lanes hook (engine\Lanes.cs): flow numbers of the last Validate
+    /// Total items/min on every belt reached by the flow walk (check 6).
+    public Dictionary<Bld, double> BeltLoads;
+    /// Items/min every machine sorter must move: max(planned rate, full-speed machine rate) per sorter.
+    public Dictionary<Bld, double> SorterNeeds;
 
     /// Check 7 only (power coverage, tower links, power-node distance) - for blueprints read back from the game,
     /// e.g. the user's game-proven refs\engine-electric-motor-120-v3-user.txt (selftest).
@@ -77,6 +85,8 @@ public class Validator
         readonly Dictionary<Bld, string> laneOf = new Dictionary<Bld, string>();
         List<Bld> topo;
         bool beltGraphOk = true;
+        public readonly Dictionary<Bld, double> Loads = new Dictionary<Bld, double>();   // lanes hook
+        public readonly Dictionary<Bld, double> Needs = new Dictionary<Bld, double>();   // lanes hook
 
         public Run(GameData gd, BlockSpec spec, Layout layout, ProductionPlan plan, ValidationReport report)
         {
@@ -214,18 +224,18 @@ public class Validator
         // ---------------------------------------------------------------- user rule 4 (tiers)
         void Tiers()
         {
+            // lanes hook (PLAN.md decision 8, replaces the old "no Mk.III" rule): no belt / sorter above the spec caps
+            if (spec == null) return;
+            int bad = 0;
             foreach (Bld b in L.All)
             {
-                if (b.ItemId == Ids.BeltMk3) R.Fail("rule 4: belt Mk.III (2003) at " + At(b.X, b.Y));
-                if (b.ItemId == Ids.SorterMk3) R.Fail("rule 4: sorter Mk.III (2013) at " + At(b.X, b.Y));
+                if (b.Kind == Kind.Belt && !Lanes.WithinCap(b.ItemId, spec.Tiers.Belt) && bad++ < 10)
+                    R.Fail("rule 4: belt " + b.ItemId + " above the belt cap " + spec.Tiers.Belt + " at " + At(b.X, b.Y));
+                if (b.Kind == Kind.Sorter && !Lanes.WithinCap(b.ItemId, spec.Tiers.Sorter) && bad++ < 10)
+                    R.Fail("rule 4: sorter " + b.ItemId + " above the sorter cap " + spec.Tiers.Sorter + " at " + At(b.X, b.Y));
             }
-            if (spec != null)
-            {
-                if (spec.Tiers.Belt == Ids.BeltMk3 || spec.Tiers.Sorter == Ids.SorterMk3) R.Fail("rule 4: spec asks for a Mk.III belt or sorter");
-                int ob = belts.Count(b => b.ItemId != spec.Tiers.Belt), os = sorters.Count(s => s.ItemId != spec.Tiers.Sorter);
-                if (ob > 0) R.Warn(ob + " belts differ from the spec belt tier " + spec.Tiers.Belt);
-                if (os > 0) R.Warn(os + " sorters differ from the spec sorter tier " + spec.Tiers.Sorter);
-            }
+            if (bad > 10) R.Fail(bad + " belts/sorters above the tier caps in total");
+            if (belts.Any(b => b.ItemId != spec.Tiers.Belt) || sorters.Any(s => s.ItemId != spec.Tiers.Sorter)) R.Note("tiers: " + Lanes.TierSummary(gd, L));
         }
 
         // ---------------------------------------------------------------- 1. overlap
@@ -1114,6 +1124,7 @@ public class Validator
                     }
                 }
                 double total = f.Values.Sum();
+                if (n.Kind == Kind.Belt) Loads[n] = total;   // lanes hook
                 double cap = gd != null ? gd.BeltRate(n.ItemId) : 0;
                 if (total > maxBelt) { maxBelt = total; maxAt = n; }
                 if (cap > 0 && total > cap + Eps) R.Fail("lane " + Lane(n) + " carries " + F(total) + "/min at " + At(n.X, n.Y) + ", belt " + n.ItemId + " moves " + F(cap) + "/min");
@@ -1164,6 +1175,7 @@ public class Validator
                 Bld s = kv.Key;
                 double r, cap = gd.SorterRate(s.ItemId, s.SorterLength);
                 if (!sorterRates.TryGetValue(s, out r) || cap <= 0) continue;
+                double had; Needs[s] = Math.Max(Needs.TryGetValue(s, out had) ? had : 0, Math.Max(r, kv.Value));   // lanes hook
                 string at = " at " + At(s.X, s.Y) + "->" + At(s.X2, s.Y2);
                 if (r > cap + Eps) { if (bad++ < 10) R.Fail("sorter " + s.ItemId + " L" + s.SorterLength + " must move " + F(r) + "/min, max " + F(cap) + at); }
                 // output sorters vs the machine's full-speed output (bug fix 2026-10-31, user rule: a machine at 100%
@@ -1249,6 +1261,7 @@ public class Validator
                     R.Warn("belt icon outside a block input start at " + At(b.X, b.Y));
             InputTails();
             InputGroups();
+            foreach (string m in Lanes.InputEdgeErrors(L, spec)) R.Fail(m);   // lanes hook (PLAN.md decision 7)
         }
 
         /// User rule (2026-10-31 review): the icon belt of a block input is a TAIL - the connection point for joining

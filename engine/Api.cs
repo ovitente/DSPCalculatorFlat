@@ -58,10 +58,9 @@ public class PrototypeCells
     /// The named cell used for every building of this item (first registration wins).
     public void SetDefault(int itemId, string name) { if (!byItem.ContainsKey(itemId)) byItem[itemId] = name; }
 
-    /// Generic prototype for a building item; null if none. Mk.III belt/sorter (2003/2013) are never provided (user rule 4).
+    /// Generic prototype for a building item; null if none (a belt/sorter tier without one is never used, Lanes).
     public BpBuilding ProtoFor(int itemId)
     {
-        if (itemId == Ids.BeltMk3 || itemId == Ids.SorterMk3) return null;
         string n; BpBuilding b;
         return byItem.TryGetValue(itemId, out n) && ByName.TryGetValue(n, out b) ? b : null;
     }
@@ -98,8 +97,10 @@ public class PlanStep
 
 public class LayoutOptions
 {
-    public int BeltItemMax = 2002;      // 2001/2002/2003 Mk.I/II/III cap (Mk.III not supported yet: clamped to Mk.II)
-    public int SorterItemMax = 2012;    // 2011/2012/2013/2014 cap (Mk.III / pile not supported yet: clamped to Mk.II)
+    public int BeltItemMax = 2002;      // 2001/2002/2003 Mk.I/II/III cap
+    public int SorterItemMax = 2012;    // 2011/2012/2013/2014 cap (pile sorter not supported yet: clamped to Mk.III)
+    /// Cheapest belt/sorter tier per lane / sorter inside the caps (PLAN.md decision 8); false = everything at the caps.
+    public bool CheapestTiers = true;
     public int LabStackMax = 15;        // vertical construction tech cap (labs not placed yet)
     public int TimeBudgetMs = 60000;
     public int ProliferatorItemId = 0;  // 1141/1142/1143; 0 = none
@@ -164,6 +165,8 @@ public static class FlatEngine
             res.Plan = mapped.Plan;
             if (res.Errors.Count > 0) return res;
             BlockSpec spec = mapped.Spec;
+            // lanes hook: tiers without a prototype record are never used (cap drops below them, warning)
+            Lanes.ClampToPrototypes(gd, spec, game.Cells, res.Warnings);
 
             if (stop()) { res.Errors.Add(StopText(timedOut)); return res; }
             say(0.05, "laying out rows and routing belts");

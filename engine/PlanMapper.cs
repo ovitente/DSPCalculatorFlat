@@ -52,14 +52,10 @@ public static class PlanMapper
         if (!(input.TargetPerMin > 0)) res.Errors.Add("target rate must be > 0");
         if (res.Errors.Count > 0) return res;
 
-        // ---- spec (tiers capped by the options; Mk.III belt / sorter and pile sorters not supported yet)
+        // ---- spec (lanes hook: tier caps Mk.I-III from the options, pile sorter -> Mk.III; cheapest tier inside the caps)
         var spec = new BlockSpec { Item = input.TargetItemId, Rate = input.TargetPerMin };
-        spec.Tiers.Belt = opt.BeltItemMax == Ids.BeltMk1 ? Ids.BeltMk1 : Ids.BeltMk2;
-        if (opt.BeltItemMax != Ids.BeltMk1 && opt.BeltItemMax != Ids.BeltMk2)
-            res.Warnings.Add("belt cap " + n(opt.BeltItemMax) + ": only Mk.I/Mk.II belts are supported yet, using " + n(spec.Tiers.Belt));
-        spec.Tiers.Sorter = opt.SorterItemMax == Ids.SorterMk1 ? Ids.SorterMk1 : Ids.SorterMk2;
-        if (opt.SorterItemMax != Ids.SorterMk1 && opt.SorterItemMax != Ids.SorterMk2)
-            res.Warnings.Add("sorter cap " + n(opt.SorterItemMax) + ": only Mk.I/Mk.II sorters are supported yet, using " + n(spec.Tiers.Sorter));
+        Lanes.ApplyCaps(gd, opt, spec.Tiers, res.Warnings);
+        spec.CheapestTiers = opt.CheapestTiers;
         spec.InEdge = opt.InEdge; spec.OutEdge = opt.OutEdge; spec.Safe60 = opt.Safe60; spec.Buffer = opt.Buffer;
         spec.MaxRow = opt.MaxRow > 0 ? opt.MaxRow : 12;
         spec.ShortDesc = opt.ShortDesc; spec.Desc = opt.Desc;
@@ -252,7 +248,7 @@ public static class PlanMapper
         if (spec != null)
         {
             LayoutOptions o = p.Options;
-            o.BeltItemMax = spec.Tiers.Belt; o.SorterItemMax = spec.Tiers.Sorter;
+            o.BeltItemMax = spec.Tiers.Belt; o.SorterItemMax = spec.Tiers.Sorter; o.CheapestTiers = spec.CheapestTiers;
             o.InEdge = spec.InEdge; o.OutEdge = spec.OutEdge; o.Safe60 = spec.Safe60; o.Buffer = spec.Buffer;
             o.OwnSupply.AddRange(spec.OwnSupply); o.MaxRow = spec.MaxRow;
             o.ShortDesc = spec.ShortDesc; o.Desc = spec.Desc;

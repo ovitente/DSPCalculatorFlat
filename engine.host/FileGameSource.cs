@@ -39,7 +39,7 @@ public class FileGameSource : IGameSource
     {
         GameBp.Init(gameDll);
         DspFlat.Host.Cells.ToolsRoot = dataRoot;
-        GameCells = DspFlat.Host.Cells.Load(bpDir);
+        GameCells = DspFlat.Host.Cells.Load(bpDir, Data);
         GameVersion = GameBp.InstalledGameVersion();
     }
 }

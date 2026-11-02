@@ -6,7 +6,7 @@
 //
 // Usage:
 //   MakeBlock.exe --item "Magnetic Coil" --rate 360 [--out file.txt] [--plan-only]
-//                 [--asm mk1|mk2|mk3] [--smelter arc|plane] [--belt mk1|mk2] [--sorter mk1|mk2]
+//                 [--asm mk1|mk2|mk3] [--smelter arc|plane] [--belt mk1|mk2|mk3] [--sorter mk1|mk2|mk3] [--cheapest-tiers]
 //                 [--raw "Copper Ingot,Iron Ingot"] [--recipe <item>=<recipeId>] [--clean]
 //                 [--in-edge S] [--out-edge N] [--bp-dir <Blueprint folder>] [--game-dll <Assembly-CSharp.dll>]
 //                 [--data-root <blueprint-tools folder>]
@@ -235,8 +235,9 @@ static class MakeBlock
         string v;
         if ((v = Opt(opt, "asm")) != null) spec.Tiers.Assembler = Pick(v, "asm", new[] { "mk1", "mk2", "mk3" }, new[] { Ids.AsmMk1, Ids.AsmMk2, Ids.AsmMk3 });
         if ((v = Opt(opt, "smelter")) != null) spec.Tiers.Smelter = Pick(v, "smelter", new[] { "arc", "plane" }, new[] { Ids.ArcSmelter, Ids.PlaneSmelter });
-        if ((v = Opt(opt, "belt")) != null) spec.Tiers.Belt = Pick(v, "belt", new[] { "mk1", "mk2" }, new[] { Ids.BeltMk1, Ids.BeltMk2 });
-        if ((v = Opt(opt, "sorter")) != null) spec.Tiers.Sorter = Pick(v, "sorter", new[] { "mk1", "mk2" }, new[] { Ids.SorterMk1, Ids.SorterMk2 });
+        if ((v = Opt(opt, "belt")) != null) spec.Tiers.Belt = Pick(v, "belt", new[] { "mk1", "mk2", "mk3" }, new[] { Ids.BeltMk1, Ids.BeltMk2, Ids.BeltMk3 });
+        if ((v = Opt(opt, "sorter")) != null) spec.Tiers.Sorter = Pick(v, "sorter", new[] { "mk1", "mk2", "mk3" }, new[] { Ids.SorterMk1, Ids.SorterMk2, Ids.SorterMk3 });
+        spec.CheapestTiers = opt.ContainsKey("cheapest-tiers");
         spec.Tiers.CheckUserRules();
 
         if ((v = Opt(opt, "raw")) != null)
@@ -280,7 +281,7 @@ static class MakeBlock
     static int Pick(string v, string what, string[] names, int[] ids)
     {
         int i = Array.IndexOf(names, v.ToLowerInvariant());
-        if (i < 0) throw new ArgumentException("--" + what + " must be one of " + string.Join("|", names) + (what == "belt" || what == "sorter" ? " (Mk.III not allowed)" : ""));
+        if (i < 0) throw new ArgumentException("--" + what + " must be one of " + string.Join("|", names));
         return ids[i];
     }
 
@@ -361,7 +362,8 @@ static class MakeBlock
     static void Usage()
     {
         Console.WriteLine("usage: MakeBlock.exe --item <name|id> --rate <per min> [--out file.txt] [--plan-only]");
-        Console.WriteLine("       [--asm mk1|mk2|mk3] [--smelter arc|plane] [--belt mk1|mk2] [--sorter mk1|mk2]");
+        Console.WriteLine("       [--asm mk1|mk2|mk3] [--smelter arc|plane] [--belt mk1|mk2|mk3] [--sorter mk1|mk2|mk3]");
+        Console.WriteLine("       [--cheapest-tiers] (belt/sorter options are caps; each lane/sorter gets the cheapest tier that carries it)");
         Console.WriteLine("       [--raw \"item,item\"] [--recipe item=recipeId;...] [--clean] [--in-edge S] [--out-edge N]");
         Console.WriteLine("       [--short-desc text] [--desc text] [--bp-dir dir] [--game-dll path] [--data-root blueprint-tools dir]");
         Console.WriteLine("       [--safe60] (E-W machine pitch/colliders safe up to 60 deg latitude) [--map] (ASCII map)");

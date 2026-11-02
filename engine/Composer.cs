@@ -214,6 +214,8 @@ public class Composer
             Desc = "";
             return empty;
         }
+        // lanes hook (PLAN.md decision 8): cheapest belt/sorter tier per lane and sorter inside the caps
+        if (bestOk != null && spec.CheapestTiers) Lanes.AssignTiers(gd, spec, best.L, plan, Notes);
         Desc = Describe(best.L, plan, spec, gd);
         return best.L;
     }
@@ -328,7 +330,7 @@ public class Composer
         }
         if (plan != null)
             foreach (var s in plan.Steps) facts.Add(s.Machines + " " + n(s.MachineItem) + ": " + n(s.Item));
-        facts.Add("belts " + BpText.Tier(n(spec.Tiers.Belt)) + ", sorters " + BpText.Tier(n(spec.Tiers.Sorter)));
+        facts.Add("belts " + Lanes.TiersUsed(gd, layout, Lanes.BeltTiers, spec.Tiers.Belt) + ", sorters " + Lanes.TiersUsed(gd, layout, Lanes.SorterTiers, spec.Tiers.Sorter));   // lanes hook
         if (layout.All.Any(b => b.Kind == Kind.Storage)) facts.Add("buffer depot at the end");
         return BpText.Lines(n(target) + " " + f(rate) + "/min", facts);
     }
@@ -482,11 +484,13 @@ public class Composer
         }
 
         // ---------------------------------------------------------------- rows
-        static int LanesNeeded(Step s, double beltRate)
+        int LanesNeeded(Step s, double beltRate)
         {
             double outRate = s.Outputs.Count > 0 ? s.Outputs[0].Rate : s.MaxOutputRate;
             double worst = Math.Max(outRate, s.Inputs.Count > 0 ? s.Inputs.Max(x => x.Rate) : 0);
-            return Math.Max(1, (int)Math.Ceiling(worst / beltRate - 1e-9));
+            int byRate = Math.Max(1, (int)Math.Ceiling(worst / beltRate - 1e-9));
+            // lanes hook (PLAN.md decision 9): machines per lane = floor(lane rate / one machine's full-speed demand)
+            return Math.Max(byRate, Lanes.LanesFor(gd, s, s.Machines, beltRate));
         }
 
         /// Machines per parallel row of a step (K copies rule, at least what the belt rate needs).
@@ -548,7 +552,8 @@ public class Composer
                         if (idx >= 0) slots.Add(new KeyValuePair<RowInfo, double>(c, c.InRates[idx]));
                     }
                 }
-                var groups = PackConsumers(slots, beltRate, spec.OwnSupply, x => x.Step.Item);
+                // lanes hook (PLAN.md decision 9): a group may only grow until one of its row's lanes is full at full speed
+                var groups = PackConsumers(slots, Lanes.GroupCap(gd, s, beltRate), spec.OwnSupply, x => x.Step.Item);
                 if (slots.Count == 0) groups.Add(null);   // block output: rows by lane rate only
                 int partNo = 0;
                 foreach (var g in groups)
@@ -560,7 +565,10 @@ public class Composer
                     // parts: lane rate (block output rows) or the height cap (single-consumer rows)
                     int parts = 1;
                     if (g == null) parts = Math.Max(1, Math.Min(count, LanesNeeded(s, beltRate)));
-                    if ((g == null || g.Count == 1) && capMachines > 0) parts = Math.Max(parts, (int)Math.Ceiling(count / (double)capMachines - 1e-9));
+                    // lanes hook (decision 9): rows on block input lanes are split by lane capacity only, not by the height cap
+                    bool laneRow = ins.Any(x => s.IsExternal(plan, x.Item));
+                    if ((g == null || g.Count == 1) && capMachines > 0 && !laneRow) parts = Math.Max(parts, (int)Math.Ceiling(count / (double)capMachines - 1e-9));
+                    if (g != null && g.Count == 1) parts = Math.Max(parts, Lanes.LanesFor(gd, s, count, beltRate));   // lanes hook (decision 9)
                     parts = Math.Min(parts, count);
                     for (int p = 0; p < parts; p++)
                     {
@@ -1135,6 +1143,8 @@ public class Composer
 
             // 4. raw inputs
             foreach (var kv in rawFeeds) RouteRaw(kv.Key, kv.Value, rawConn.ContainsKey(kv.Value) ? rawConn[kv.Value] : 0, edgeY);
+            // lanes hook (PLAN.md decision 7): every input lane's icon tail ends on the input edge row
+            Lanes.TailsToEdge(work, blockPorts, (x, y) => work.Grid.IsFree(x, y) && !blocked.Contains(K(x, y)) && !InForeignZone(K(x, y)), errors);
 
             foreach (var r in rowsOk.Where(r => r.Step.Item != plan.TargetItem && !edgesOk.Any(e => e.From == r)))
                 errors.Add("composer: output of row " + r.Name + " (" + N(r.Step.Item) + ") has no consumer");
@@ -1477,7 +1487,7 @@ public class Composer
                 var belts = Lay(path, F, null, r.Step.Item, last.Chain);
                 Layout.Link(last, belts[0], 1);
                 foreach (var b in belts) b.Role = "product buffer";
-                Fragment f = Modules.DepotBuffer(belts[n - 3], belts[n - 2], belts[n - 1], run, depotRight, spec.Tiers.Sorter, r.Step.Item);
+                Fragment f = Modules.DepotBuffer(belts[n - 3], belts[n - 2], belts[n - 1], run, depotRight, Lanes.DepotSorter(spec.Tiers.Sorter), r.Step.Item);   // lanes hook: depot cell is Mk.II
                 foreach (var b in f.Blds)
                 {
                     AddBld(work, b);

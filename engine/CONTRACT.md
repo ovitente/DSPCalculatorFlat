@@ -28,8 +28,9 @@ Architecture: `analysis/generator-design.md`. Geometry: `analysis/patterns.md`. 
 2. **3-4 inputs:** the extra lanes sit at **length 2, directly behind the adjacent (L1) lanes** (3rd input behind side A,
    4th behind side B). This is the only exception to rule 1.
 3. **Outputs may be offset:** output sorter length 1 or 2, **max 3**.
-4. **Tiers: Mk.II belts (2002) and Mk.II sorters (2012) at most. No Mk.III belt or sorter anywhere.**
-   (`Tiers.CheckUserRules` rejects them on the CLI; the Validator must also fail any 2003/2013 record.)
+4. ~~Tiers: Mk.II belts (2002) and Mk.II sorters (2012) at most.~~ Replaced by PLAN.md decision 8 (2026-11-02): the
+   belt/sorter tiers are caps (Mk.I-III); no belt/sorter above the cap (Validator rule 4), cheapest tier inside it
+   (`engine\Lanes.cs`, docs\engine-api.md "Tier caps").
 5. **Input-belt icon:** the FIRST belt tile of every block input chain gets `Parameters = [itemId, 0]`
    (e.g. `[1001,0]` iron ore, `[1002,0]` copper ore). Proof: `refs\lent-begin.txt`. Must survive re-import.
 6. **Merges are side-joins, never splitters:** the joining chain's last tile `Output = target tile` (adjacent,
