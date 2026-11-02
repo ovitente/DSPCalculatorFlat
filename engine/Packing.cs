@@ -18,6 +18,7 @@
 //
 // Composer hooks are the lines marked "PACK HOOK" in engine\Composer.cs.
 //
+// Margin switch: Rules.MarginInCompose is still OFF - with the margin counts no turret 7.5 attempt routes (2026-11-02).
 // Margin and injected plans: Rules.ApplyMargin runs inside Compose only when BlockSpec.AddMargin is set. The CLI solver
 // sets it (its plan is the engine's own); a plan injected by DSPCalculator (PlanInput) carries the user's machine counts,
 // which are authoritative: LayoutOptions.AddMargin defaults to false there, and GroupCounts then lays out exactly the

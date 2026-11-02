@@ -107,6 +107,14 @@ public static partial class SelfTest
     static string MicroPackMarginOption()
     {
         var e = new Errs();
+        bool oldM = Rules.MarginInCompose;
+        Rules.MarginInCompose = true;   // global switch is off (turret routing); the option logic is tested with it on
+        try { MarginOption(e); } finally { Rules.MarginInCompose = oldM; }
+        return e.Result();
+    }
+
+    static void MarginOption(Errs e)
+    {
         // CLI: the engine's own plan gets the rule 14 margin
         BlockSpec spec = AsmSpec(3.75);
         ProductionPlan plan = new Solver(gd, spec).Solve();
@@ -133,7 +141,6 @@ public static partial class SelfTest
         foreach (string m in r3.Errors) e.L.Add("engine (user count): " + m);
         if (r3.Ok) e.Check(r3.Layout.Count(Kind.Machine, Ids.ArcSmelter) == smelters, "user count 2: " + r3.Layout.Count(Kind.Machine, Ids.ArcSmelter) + " smelters, expected " + smelters);
         e.Check(new LayoutOptions().AddMargin == false, "LayoutOptions.AddMargin must default to false (addon)");
-        return e.Result();
     }
 
     static string MicroPackSplit()

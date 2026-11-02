@@ -31,9 +31,11 @@ namespace DspFlat.Engine
         /// Switch for the generative rules (14 margin, 13 tower pruning). Off = the pre-rules engine behaviour.
         public static bool Enabled = true;
         /// Rule 14 inside Composer.Compose (only when BlockSpec.AddMargin: the CLI solver's plans; injected DSPCalculator
-        /// plans keep the user's counts, LayoutOptions.AddMargin false). On since feat-rules-pack: the grouped row split
-        /// builds Step.Machines (engine\Packing.cs GroupCounts). ApplyMargin / CheckMargin also work on a plan on their own.
-        public static bool MarginInCompose = true;
+        /// plans keep the user's counts, LayoutOptions.AddMargin false). The row split now builds Step.Machines
+        /// (engine\Packing.cs GroupCounts), but the switch stays OFF: with the margin (copper 4, coil 2) no turret 7.5 attempt
+        /// validates (routing fails in every mode, feat-rules-pack 2026-11-02); without it split mode does.
+        /// ApplyMargin / CheckMargin work on a plan on their own.
+        public static bool MarginInCompose = false;
 
         static string F(double v) { return v.ToString("0.##", CultureInfo.InvariantCulture); }
         static string At(double x, double y) { return "(" + F(x) + "," + F(y) + ")"; }
