@@ -1,0 +1,10 @@
+{
+  "name": "DSPCalculatorFlat",
+  "version_number": "0.1.0",
+  "website_url": "https://github.com/ovitente/DSPCalculatorFlat",
+  "description": "Adds a Flat blueprint button to DSPCalculator: lays out the calculated production chain as a flat block (belts, sorters, machines) and enters paste mode.",
+  "dependencies": [
+    "xiaoye97-BepInEx-5.4.17",
+    "jinxOAO-DSPCalculator-0.5.25"
+  ]
+}
