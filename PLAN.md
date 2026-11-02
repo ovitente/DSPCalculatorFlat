@@ -49,6 +49,19 @@ Agreed with the user on 2026-11-02 (grilling session). Each phase ends with a ch
    - lane split formula, Mk.III, parallel lanes; tier choice under the calculator's caps;
    - spray coaters + proliferator lane;
    - Matrix Lab towers; Miniature Particle Collider geometry.
+   - **15 layout rules** approved by the user on 2026-11-02 (handed over from the blueprint session):
+     source `blueprint-tools/analysis/user-edit-turret75.md` (Russian list at the top, evidence below),
+     game-proven references `blueprint-tools/refs/engine-missile-turret-7.5-v1-useredit*.txt`
+     (useredit3 is the latest, works in game). Summary: tight machine columns (pitch 5-6); long lanes
+     to the final machine in one edge bus stacked z 0/0.5/1; later-joining lane runs higher; a machine
+     feeding only the final machine hands over machine-to-machine (2 x L3 sorters); its column sits next
+     to the final machine; final machine fed from 4 sides, L1 inputs; buffer line final -> L2 -> Depot
+     Mk.I -> L1 -> 3-tile tail; 2-way splitters only, third consumer takes from the lane tail; machine
+     output faces the bus; splitter outputs run as a horizontal band crossed by single-tile bridges;
+     last machine on two lanes fed from both dead ends on one side; no separate ore+smelter for one
+     small machine when the main line has margin; tesla towers in gaps, minimum by coverage; margin
+     sized by the bottleneck, never borrowed from another chain; a second machine of the same product
+     side-merges into the first one's output lane before the splitter.
    Check: selftest cases per feature.
 5. **Pattern catalog** - list of layout situations for the user to draw in game, and a loader that
    turns a drawn blueprint into an engine pattern. Blocked on the user's drawings.
@@ -60,3 +73,8 @@ Agreed with the user on 2026-11-02 (grilling session). Each phase ends with a ch
 - The engine has geometry only for arc/plane smelters and assemblers Mk.I-III.
 - 3- and 4-input rows are not game-proven yet.
 - Search can take minutes on large chains (to be replaced by patterns).
+
+## After v1
+
+- Full missile turret 22.5 kit (bus/floorplan style) through the shared engine, each module
+  self-reviewed with `blueprint-tools/tools-preview/RenderBp.exe` before it goes to the user.
