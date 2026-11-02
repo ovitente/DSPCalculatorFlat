@@ -80,7 +80,7 @@ public static partial class SelfTest
         var comp = new Composer(gd, spec);
         comp.TimeBudgetMs = 60000;
         bool was = EdgeBus.Enabled, wf = EdgeBus.Force;
-        if (Environment.GetEnvironmentVariable("BUS2_OFF") != null) EdgeBus.Enabled = false;
+        EdgeBus.Enabled = Environment.GetEnvironmentVariable("BUS2_OFF") == null;   // the bus is off by default in the engine
         EdgeBus.Force = force;
         Layout l;
         try { l = comp.Compose(plan); } finally { EdgeBus.Enabled = was; EdgeBus.Force = wf; }

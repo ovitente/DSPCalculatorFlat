@@ -27,7 +27,10 @@ namespace DspFlat.Engine
     public static class EdgeBus
     {
         /// Switch for the generative bus (rules 2/3). Off = the per-lane routes of the pre-bus engine.
-        public static bool Enabled = true;
+        /// OFF by default (2026-11-02): on the turret 7.5 every bus attempt broke the steel / circuit-copper routes and the
+        /// slower attempts used up the time budget before the valid split-rows attempt (52x27) -> no valid layout. The
+        /// Validator check of stacked bus runs is always active.
+        public static bool Enabled = false;
         /// Minimum Manhattan length (tiles) of a lane into the final row to be taken onto the bus.
         public static int MinLength = 12;
         /// Test knob: build the bus even where the separate routes are shorter / stay below the bus row.
