@@ -85,7 +85,7 @@ public class Composer
         r.Area = bx.IsEmpty ? long.MaxValue : (long)(bx.X1 - bx.X0 + 1) * (bx.Y1 - bx.Y0 + 1);
         r.Routes = RouteCounts(l);
         int belts = l.All.Count(b => b.Kind == Kind.Belt);
-        r.Cost = r.Area == long.MaxValue ? long.MaxValue : r.Area + RunAreaCost * r.Routes[1] + RaisedAreaCost * r.Routes[0] + TurnAreaCost * r.Routes[2] + BeltAreaPct * belts / 100;
+        r.Cost = r.Area == long.MaxValue ? long.MaxValue : r.Area + RunAreaCost * r.Routes[1] + RaisedAreaCost * r.Routes[0] + TurnAreaCost * r.Routes[2] + BeltAreaPct * belts / 100 + Packing.PitchCost(l);   // PACK HOOK: rule 1 pitch
         return r;
     }
 
@@ -134,7 +134,7 @@ public class Composer
         // bits 8/16 (user review: fewer crossings): line-start rows mirrored / producer lines visited in reverse entry order
         int[] grp = { 0, 4, 8, 12, 16, 20, 24, 28 };
         var modeSets = new List<int[]> { tall ? grp.Concat(new[] { 1, 5 }).ToArray() : grp, multi ? new[] { 2, 3 } : new[] { 2 } };
-        if (Packing.Enabled && multi) modeSets.Insert(1, modeSets[0].Select(m => m | 32).ToArray());   // PACK HOOK: pre-rules packing (3-way, own rows) only when tails find nothing valid
+        if (Packing.Enabled && multi) { modeSets.Insert(1, modeSets[0].Select(m => m | 32).ToArray()); modeSets.Add(new[] { 3 | 32 }); }   // PACK HOOK: pre-rules packing (3-way, own rows) only when tails find nothing valid
         int fm = EngineTuning.ForcedMode;   // debug: one row mode only
         if (fm >= 0 && fm <= 63) modeSets = new List<int[]> { new[] { fm } }; // PACK HOOK: bit 32
         foreach (int[] modes in modeSets)
@@ -410,6 +410,7 @@ public class Composer
         public List<KeyValuePair<RowInfo, double>> Feeds;
         /// PACK HOOK (rules 8/12): consumer rows fed from the END of a fed row's input lane: (consumer, rate, donor row)
         public List<Tuple<RowInfo, double, RowInfo>> TailFeeds;
+        public List<int[][]> SplitTails;       // PACK HOOK (split mode, rule 12): {tail consumer, donor consumer (its lane end feeds the tail), root consumer} as {step, part}
     }
 
     class LineInfo
@@ -640,6 +641,9 @@ public class Composer
                         double tot = c.Inputs.Where(x => x.Item == s.Item).Sum(x => x.Rate);
                         for (int p = 0; p < parts[ci].Length; p++) { dem.Add(tot * parts[ci][p] / Math.Max(1, c.Machines)); ded.Add(new[] { ci, p }); }
                     }
+                    // PACK HOOK (enginePacking.cs, rule 12): a one-machine consumer row takes from another consumer's lane end
+                    var splitTails = new List<int[][]>();
+                    if (packTails) { int[] dn = Packing.SplitTails(dem, s.MachinesExact, beltRate); for (int j = dem.Count - 1; j >= 0; j--) if (dn[j] >= 0) { int rt = Packing.Root(dn, j); dem[rt] += dem[j]; splitTails.Add(new[] { ded[j], ded[dn[j]], ded[rt] }); } for (int j = dem.Count - 1; j >= 0; j--) if (dn[j] >= 0) { dem.RemoveAt(j); ded.RemoveAt(j); } }
                     if (dem.Count > 1 && s.Machines >= dem.Count && dem.All(d => d <= beltRate + 1e-9))
                     {
                         var counts = Apportion(s.Machines, dem.ToArray());
@@ -652,7 +656,7 @@ public class Composer
                             int cnt = Math.Max(counts[j], (int)Math.Ceiling(s.MachinesExact * share - 1e-9));
                             rows.Add(new RowInfo
                             {
-                                Step = s, StepIndex = si, Part = j, Count = cnt, Share = share, Dedicated = ded[j],
+                                Step = s, StepIndex = si, Part = j, Count = cnt, Share = share, Dedicated = ded[j], SplitTails = splitTails.Where(t => t[2] == ded[j]).ToList(),   // PACK HOOK
                                 InItems = insS.Select(x => x.Item).ToArray(), InRates = insS.Select(x => x.Rate * share).ToArray(),
                                 OutRate = dem[j],
                                 Name = N(s.Item) + " for " + N(plan.Steps[ded[j][0]].Item) + (parts[ded[j][0]].Length > 1 ? " #" + (ded[j][1] + 1) : "")
@@ -730,6 +734,8 @@ public class Composer
                         RowInfo c = cons.FirstOrDefault(x => x.StepIndex == p.Dedicated[0] && x.Part == p.Dedicated[1]);
                         if (c == null) { errors.Add("composer: no consumer row for " + p.Name); continue; }
                         edges.Add(new Edge { From = p, To = c, Item = s.Item, Rate = p.OutRate });
+                        // PACK HOOK (rule 12): tail consumers of this dedicated row ride its consumer's lane
+                        if (p.SplitTails != null) foreach (var t in p.SplitTails) { RowInfo tc = cons.FirstOrDefault(x => x.StepIndex == t[0][0] && x.Part == t[0][1]); RowInfo dc = cons.FirstOrDefault(x => x.StepIndex == t[1][0] && x.Part == t[1][1]); if (tc != null && dc != null) edges.Add(new Edge { From = p, To = tc, Item = s.Item, Rate = 0, TailOf = dc }); }
                     }
                     continue;
                 }

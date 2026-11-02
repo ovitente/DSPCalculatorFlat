@@ -58,7 +58,7 @@ public static class EnvTuning
         EngineTuning.RouterRampCost = I("MAKEBLOCK_RAMP", EngineTuning.RouterRampCost);
         EngineTuning.RouterRaisedCost = I("MAKEBLOCK_RAISED", EngineTuning.RouterRaisedCost);
         int m = I("MAKEBLOCK_MODE", -1);
-        EngineTuning.ForcedMode = m >= 0 && m <= 31 ? m : -1;
+        EngineTuning.ForcedMode = m >= 0 && m <= 63 ? m : -1;   // PACK HOOK: bit 32 = no tail pickup
         EngineTuning.DebugNotes = Environment.GetEnvironmentVariable("MAKEBLOCK_DEBUG") != null;
     }
 

@@ -17,6 +17,7 @@ public static partial class SelfTest
         Case("micro pack: rules 8/12 Pack - turret iron (4 consumers) -> 1 group, 2-way + 2 tails; copper (3) -> 2-way + 1 tail; no lane room (cap 80) -> 3-way", MicroPackGroups);
         Case("micro pack: Assembler Mk.I 3/min - iron feeds 3 steps from one ore lane (2-way splitter + tail), valid, rules 8/12 ok", MicroPackAsm);
         Case("micro pack: rule 14 on Assembler Mk.I 3.75/min (iron 1.00 exact, 3 consumers) - CLI 2 smelters; injected PlanInput keeps 1; user count 2 is built", MicroPackMarginOption);
+        Case("micro pack: rule 12 split mode (forced mode 3) - Assembler Mk.I 15/min: the 1-machine iron rows ride the gear lane end, fewer iron ore lanes than mode 35 (no tails)", MicroPackSplit);
     }
 
     static string MicroPackCounts()
@@ -132,6 +133,30 @@ public static partial class SelfTest
         foreach (string m in r3.Errors) e.L.Add("engine (user count): " + m);
         if (r3.Ok) e.Check(r3.Layout.Count(Kind.Machine, Ids.ArcSmelter) == smelters, "user count 2: " + r3.Layout.Count(Kind.Machine, Ids.ArcSmelter) + " smelters, expected " + smelters);
         e.Check(new LayoutOptions().AddMargin == false, "LayoutOptions.AddMargin must default to false (addon)");
+        return e.Result();
+    }
+
+    static string MicroPackSplit()
+    {
+        var e = new Errs();
+        int old = EngineTuning.ForcedMode;
+        try
+        {
+            var lanes = new int[2];
+            int k = 0;
+            foreach (int mode in new[] { 3, 3 | 32 })
+            {
+                EngineTuning.ForcedMode = mode;
+                BlockSpec spec = AsmSpec(15);
+                ProductionPlan plan = new Solver(gd, spec).Solve();
+                Layout l; Composer comp;
+                var rs = PackCompose(spec, plan, e, out l, out comp);
+                lanes[k++] = l.All.Count(b => b.Kind == Kind.Belt && b.Parameters != null && b.Parameters.Length == 2 && b.Parameters[0] == Ids.IronOre);
+                if (mode == 3) { RuleResult r12 = rs.First(r => r.Rule == 12); e.Check(r12.Ok, "mode 3: " + r12); }
+            }
+            e.Check(lanes[0] < lanes[1], "iron ore lanes: tails " + lanes[0] + ", no tails " + lanes[1]);
+        }
+        finally { EngineTuning.ForcedMode = old; }
         return e.Result();
     }
 }

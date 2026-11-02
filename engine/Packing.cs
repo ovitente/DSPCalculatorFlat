@@ -71,6 +71,25 @@ namespace DspFlat.Engine
             return c;
         }
 
+        // ================================================================ rule 1: tight machine columns
+        /// Rule 1 target (R1, useredit3: 5-6 tiles for 3-wide machines): largest allowed pitch between neighbouring
+        /// machine columns (distinct rounded machine centre x, as Rules.Check measures it).
+        public const int MaxPitch = 6;
+        /// Selection cost per tile of pitch above MaxPitch (Composer attempt cost is in tiles of area).
+        public static int PitchCostTiles = 40;
+
+        /// Sum over neighbouring machine columns of (pitch - MaxPitch) where positive.
+        public static int PitchExcess(Layout l)
+        {
+            var xs = l.All.Where(b => b.Kind == Kind.Machine).Select(m => (int)Math.Round(m.X)).Distinct().OrderBy(x => x).ToList();
+            int ex = 0;
+            for (int i = 1; i < xs.Count; i++) ex += Math.Max(0, xs[i] - xs[i - 1] - MaxPitch);
+            return ex;
+        }
+
+        /// Extra attempt cost for rule 1 (0 when packing is off).
+        public static long PitchCost(Layout l) { return Enabled ? (long)PitchCostTiles * PitchExcess(l) : 0; }
+
         // ================================================================ rules 8 + 12: 2-way splitters + tail pickup
         /// Packs consumer slots (consumer, demand) into groups: at most 2 mains (2-way splitter) and at most one tail per
         /// main, group total <= cap. Slots are taken by descending demand; a slot joins the first group with room as a
@@ -105,6 +124,32 @@ namespace DspFlat.Engine
             }
             return groups;
         }
+
+        /// Rule 12 in the split row mode (one producer row per consumer row): a consumer whose own producer row would be a
+        /// single machine (exact * demand / total <= 1) takes the item from the lane end of another consumer instead, when
+        /// that lane has room (root row demand incl. its tails + this demand <= laneCap). Roots are consumers whose own row
+        /// has more than one machine; tails chain (the 2nd tail of a root takes from the 1st tail's lane end, serial pickup).
+        /// Returns the donor index per consumer (-1 = keeps its own row); Root() gives the consumer whose row feeds the chain.
+        public static int[] SplitTails(IList<double> dem, double exact, double laneCap)
+        {
+            int n = dem.Count; var donor = Enumerable.Repeat(-1, n).ToArray();
+            double sum = dem.Sum(); if (sum <= 0 || n < 2) return donor;
+            var load = dem.ToArray(); var last = Enumerable.Range(0, n).ToArray();   // per root: lane load, chain end
+            Func<int, bool> big = i => exact * dem[i] / sum > 1 + 1e-9;
+            foreach (int j in Enumerable.Range(0, n).OrderBy(i => dem[i]))
+            {
+                if (big(j)) continue;
+                int best = -1;
+                for (int k = 0; k < n; k++)
+                    if (k != j && big(k) && load[k] + dem[j] <= laneCap + 1e-9 && (best < 0 || load[k] < load[best])) best = k;
+                if (best < 0) continue;
+                donor[j] = last[best]; last[best] = j; load[best] += dem[j];
+            }
+            return donor;
+        }
+
+        /// The root consumer of a tail chain (SplitTails result).
+        public static int Root(int[] donor, int j) { int g = 0; while (donor[j] >= 0 && g++ < donor.Length) j = donor[j]; return j; }
 
         /// Splitter/straight feeds of a packed group for one producer part (share ps): each main consumer's lane carries
         /// its own demand plus the demand of its tail consumers.
