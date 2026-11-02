@@ -50,7 +50,7 @@ namespace DSPCalculatorFlat
         public int CargoStack;                              // UserPreference.bpStack (belt stacking 1..4)
         public int LabMaxLevel;                             // UserPreference.labMaxLevel (vertical construction tech)
         public bool SolveProliferators;                     // proliferator produced inside the line
-        public int ProliferatorItemId;                      // most used proliferator of the plan, 0 = none
+        public int ProliferatorItemId;                      // strongest proliferator used by the plan, 0 = none
         public List<string> Notes = new List<string>();
     }
 
@@ -126,6 +126,7 @@ namespace DSPCalculatorFlat
                     Reflect.Call(ri, "GetProliferatorUsed", args);
                     step.ProliferatorItemId = Convert.ToInt32(args[0]);
                 }
+                if (step.IncLevel > 0 && step.ProliferatorItemId <= 0) step.ProliferatorItemId = ProliferatorForAbility(step.IncLevel);
                 if (step.UseIA)
                     plan.Notes.Add("Recipe " + step.RecipeName + " uses the Interstellar Assembly (MoreMegaStructure); it cannot be laid out flat.");
                 plan.Steps.Add(step);
@@ -153,16 +154,23 @@ namespace DSPCalculatorFlat
             foreach (int id in consumed)
                 if (!produced.Contains(id)) external.Add(id);
 
-            // ---- proliferator
+            // ---- proliferator: the engine plans ONE proliferator lane for every proliferated step. With mixed levels the
+            // strongest one used is taken: every step then gets at least the bonus the calculator planned for it (a
+            // weaker spray would under-supply the steps planned with a stronger one).
             plan.SolveProliferators = Reflect.GetBool(pref, "solveProliferators");
             var prolifUse = new Dictionary<int, double>();
             foreach (var s in plan.Steps)
                 if (s.ProliferatorItemId > 0) Add(prolifUse, s.ProliferatorItemId, s.MachineCount);
-            double best = 0;
+            int bestAbility = -1;
             foreach (var kv in prolifUse)
-                if (kv.Value > best) { best = kv.Value; plan.ProliferatorItemId = kv.Key; }
+            {
+                ItemProto ip = LDB.items.Select(kv.Key);
+                int ability = ip != null ? ip.Ability : 0;
+                if (ability > bestAbility) { bestAbility = ability; plan.ProliferatorItemId = kv.Key; }
+            }
             if (prolifUse.Count > 1)
-                plan.Notes.Add("The plan uses " + prolifUse.Count + " proliferator kinds; only one proliferator lane is planned.");
+                plan.Notes.Add("The plan uses " + prolifUse.Count + " proliferator kinds; one proliferator lane with the strongest ("
+                    + plan.ProliferatorItemId + ") is planned for all of them.");
             if (plan.ProliferatorItemId > 0 && !produced.Contains(plan.ProliferatorItemId))
                 external.Add(plan.ProliferatorItemId);
 
@@ -187,6 +195,18 @@ namespace DSPCalculatorFlat
             plan.BeltCapItemId = Fastest(belts);
             plan.SorterCapItemId = Fastest(sorters);
             return plan;
+        }
+
+        /// Proliferator item whose ItemProto.Ability equals the calculator's incLevel (1/2/4 = Mk.I/II/III, items
+        /// 1141-1143), from LDB; 0 when none. Fallback for a calculator without RecipeInfo.GetProliferatorUsed.
+        static int ProliferatorForAbility(int incLevel)
+        {
+            foreach (int id in new[] { 1141, 1142, 1143 })
+            {
+                ItemProto ip = LDB.items.Select(id);
+                if (ip != null && ip.Ability == incLevel) return id;
+            }
+            return 0;
         }
 
         static int Fastest(IList ascending)

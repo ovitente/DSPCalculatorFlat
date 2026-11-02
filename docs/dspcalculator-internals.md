@@ -92,3 +92,17 @@ a stripped/publicized copy); the addon sets it by reflection.
 
 DSPCalculator uses `UIMessageBox.Show(title, text, button, 1, new UIMessageBox.Response(() => { }))` for failures
 and `UIRealtimeTip.Popup(text)` for short notes; the addon uses the same two game APIs with English strings.
+
+## Mapping to the engine's LayoutOptions (addon `EngineAdapter.ToPlanInput`)
+
+- `BeltItemMax` / `SorterItemMax` = fastest entry of `beltsAvailable` / `sortersAvailable` (caps; pile sorter 2014 is
+  clamped to Mk.III by the engine). `CheapestTiers` = true (cheapest tier inside the caps per belt run / sorter).
+- `LabStackMax` = `UserPreference.labMaxLevel` (left at the engine default 15 when the field reads 0).
+- `ProliferatorItemId` = the proliferator of the proliferated steps: `RecipeInfo.GetProliferatorUsed` (id from
+  `CalcDB.proliferatorAbilityToId[incLevel]`), fallback = the item among 1141-1143 whose `ItemProto.Ability` equals
+  `incLevel` (LDB). The engine plans one proliferator lane, so with mixed levels the strongest proliferator used is
+  passed (a weaker spray would under-supply steps planned with a stronger one) and a note is added. 0 when no step is
+  proliferated.
+- Prototype records (`EngineAdapter.CliPrototypes`): the CLI host's set from the user's blueprints
+  (`engine.host\GameCells.cs`), every record value embedded with its source record; only the model index comes from LDB
+  (compared with the CLI value on load, logged on a difference). Items the CLI has no record for get none.

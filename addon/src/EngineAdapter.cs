@@ -109,9 +109,10 @@ namespace DSPCalculatorFlat
             var o = pi.Options;
             if (p.BeltCapItemId > 0) o.BeltItemMax = p.BeltCapItemId;
             if (p.SorterCapItemId > 0) o.SorterItemMax = p.SorterCapItemId;
-            if (p.LabMaxLevel > 0) o.LabStackMax = p.LabMaxLevel;
+            o.CheapestTiers = true;                                   // cheapest belt / sorter tier inside the caps
+            if (p.LabMaxLevel > 0) o.LabStackMax = p.LabMaxLevel;     // UserPreference.labMaxLevel (3..15 by tech)
             o.TimeBudgetMs = timeBudgetMs;
-            o.ProliferatorItemId = p.ProliferatorItemId;
+            o.ProliferatorItemId = p.ProliferatorItemId;              // 0 only when no step is proliferated
             // Not in the contract yet: p.CargoStack (belt stacking), p.BeltHighest / p.SorterHighest.
             return pi;
         }
@@ -223,53 +224,134 @@ namespace DSPCalculatorFlat
             return gd;
         }
 
-        /// Prototype records the engine's Emitter clones. The Emitter overwrites position, yaw, slots, offsets, recipe,
-        /// filter and (when the layout sets them) parameters; what the prototype contributes is the model index, pitch /
-        /// tilt and the default parameter array. Generic record per buildable item from LDB, plus the named cells the
-        /// engine asks for by name (Emitter: "depot-*", "splitter-m39" / "splitter-m40").
+        // ------------------------------------------------------------------ prototype records
+        // The CLI host (engine.host\GameCells.cs) copies these records from the user's blueprints; the addon cannot read
+        // those files, so every value that comes from a blueprint record is embedded below with its CLI source
+        // (cell name = CLI cell name, "file #index" = the record in the user's Blueprint folder or blueprint-tools\refs).
+        // Values: field dump of the CLI's FileGameSource (blueprint-tools data, game 0.10.35.29151, 2026-11-02).
+        // Only the model index comes from LDB; the CLI's value (checked there against game-data.json) is kept as
+        // CliModel and compared on load: a difference is logged and LDB wins.
+        //
+        // What the Emitter (engine\Emitter.cs) takes from a prototype: modelIndex (unless the layout sets one), pitch,
+        // pitch2, tilt, tilt2, content and the default parameters (when the layout sets none: machines, collider, coater,
+        // tesla, depot). It overwrites position (x/y/z, x2/y2/z2), yaw/yaw2, item, recipe, filter, all four slots, both
+        // offsets, links and index; slots and offsets are still copied from the CLI records so both hosts hand the
+        // engine identical records. Position, yaw and recipe of the source records are not copied (record specific,
+        // always overwritten). content is null in every CLI record.
+
+        /// One prototype record as the CLI host builds it (all values from the CLI record except the model index).
+        class ProtoSpec
+        {
+            public string Name; public int ItemId; public int CliModel; public int FixedModel; public bool Generic;
+            public int[] Params = new int[0];
+            public int OutTo, InFrom, OutFrom, InTo, OutOff, InOff;
+            public float Pitch, Pitch2, Tilt, Tilt2;
+            public string Source;
+        }
+
+        static ProtoSpec P(string name, int item, int cliModel, bool generic, string source, int[] prms)
+        {
+            var s = new ProtoSpec();
+            s.Name = name; s.ItemId = item; s.CliModel = cliModel; s.Generic = generic; s.Source = source;
+            s.Params = prms ?? new int[0];
+            return s;
+        }
+
+        static ProtoSpec Sl(ProtoSpec s, int outTo, int inFrom, int outFrom, int inTo, int outOff, int inOff)
+        {
+            s.OutTo = outTo; s.InFrom = inFrom; s.OutFrom = outFrom; s.InTo = inTo; s.OutOff = outOff; s.InOff = inOff;
+            return s;
+        }
+
+        static ProtoSpec Pt(ProtoSpec s, float pitch, float pitch2, float tilt, float tilt2)
+        {
+            s.Pitch = pitch; s.Pitch2 = pitch2; s.Tilt = tilt; s.Tilt2 = tilt2;
+            return s;
+        }
+
+        const int DepotParamCount = 110;   // Depot Mk.I record (refs\engine-turbine-60-v2-userupgrade.txt #482): 110 zeros
+
+        /// The CLI's prototype set. Generic = the record ProtoFor(item) returns (CLI Cells byItem); the others are named
+        /// only. Items the CLI has no record for (pile sorter 2014, every other building) get none here either, so the
+        /// engine never uses them (Lanes.ClampToPrototypes; StepSupport drops their steps).
+        static List<ProtoSpec> CliPrototypes()
+        {
+            var l = new List<ProtoSpec>();
+            // machines: parameters [0], slots 0
+            l.Add(P("smelter-arc", 2302, 62, true, @"t-tpl\Smelters\smelter-arc-1.txt #52", new[] { 0 }));
+            l.Add(P("smelter-plane", 2315, 194, true, @"2-smelt\Smelters.txt #8", new[] { 0 }));
+            l.Add(P("asm-mk1", 2303, 65, true, @"t-tpl\Assemblers\assemblers-8x1.txt #8", new[] { 0 }));
+            l.Add(P("asm-mk2", 2304, 66, true, @"t-tpl\Assemblers\distrubution\(assembler, 2 inputs; Cyrillic name).txt #93", new[] { 0 }));
+            l.Add(P("asm-mk3", 2305, 67, true, @"t-tpl\Assemblers mk III.txt #9", new[] { 0 }));
+            // feat-labs: Matrix Lab tower base (recipe 9, production mode [1,0], multi-level slots 14/15/15/14; levels are
+            // stacked by the engine, LabTowers) and the Deuterium collider of the community blueprint (recipe 40, [0])
+            l.Add(Sl(P("lab", 2901, 70, true, @"4-sci\bluematrix.txt #557", new[] { 1, 0 }), 14, 15, 15, 14, 0, 0));
+            l.Add(P("collider", 2310, 69, true, @"x-imp\Old Science Designs (still work)\Science - Gravity Matrix\Green Science + Proliferator.txt #903", new[] { 0 }));
+            // spray coater (engine\Coaters.cs, CLI Cells.SoftCoaterCell): no parameters, slots 14/15/15/14, no links
+            l.Add(Sl(P("spray-coater", 2313, 120, true, @"7-logi\L1.txt #36", null), 14, 15, 15, 14, 0, 0));
+            // belts: parameters [] (an icon [item,0] is set by the layout), slots 1/0/0/1
+            l.Add(Sl(P("belt-mk1", 2001, 35, true, @"5-chem\Fuel.txt #0", null), 1, 0, 0, 1, 0, 0));
+            l.Add(Sl(P("belt-mk2", 2002, 36, true, @"t-tpl\Smelters\smelter-arc-1.txt #64", null), 1, 0, 0, 1, 0, 0));
+            // Mk.III belt: CLI Cells.DeriveBeltMk3 = the belt-mk2 record with item 2003 and the game's model index
+            l.Add(Sl(P("belt-mk3", 2003, 37, true, "belt-mk2 record, item 2003 (CLI Cells.DeriveBeltMk3)", null), 1, 0, 0, 1, 0, 0));
+            // sorters: the layout always sets parameters [length] (Bld.Sorter); pitch / tilt are copied from the records
+            l.Add(Pt(Sl(P("sorter-mk1", 2011, 41, true, @"5-chem\Fuel.txt #4", new[] { 2 }), 10, 7, 0, 1, 0, 0),
+                     0.2011857f, 359.7922f, -1.00052212E-07f, -4.148834E-06f));
+            l.Add(Sl(P("sorter-mk2", 2012, 42, true, @"t-tpl\Smelters\smelter-arc-1.txt #40", new[] { 1 }), 5, -1, 0, 1, 0, 4));
+            l.Add(Sl(P("sorter-mk3", 2013, 43, true, @"t-tpl\Assemblers\distrubution\(assembler, 3 inputs; Cyrillic name).txt #3 (COL-PAIR-3)", new[] { 1 }), 3, -1, 0, 1, 0, 0));
+            l.Add(P("tesla", 2201, 44, true, @"t-tpl\Smelters\smelter-arc-1.txt #39", null));
+            l.Add(Sl(P("splitter", 2020, 38, true, @"refs\splitters.txt #0", new[] { 0, 0, 0, 0, 0, 0 }), 14, 15, 15, 14, 0, 0));
+            l.Add(Sl(P("depot-mk1", 2101, 51, true, @"refs\engine-turbine-60-v2-userupgrade.txt #482", new int[DepotParamCount]), 14, 15, 15, 14, 0, 0));
+            // named: depot buffer sorters of the user's in-game edit (the game's own pitch / tilt values)
+            l.Add(Pt(Sl(P("depot-in", 2012, 42, false, @"refs\engine-turbine-60-v2-userupgrade.txt #491", new[] { 1 }), 0, -1, 0, 1, 0, 4),
+                     359.92868f, 359.7922f, -0.0005999628f, 0.286192179f));
+            l.Add(Pt(Sl(P("depot-out1", 2012, 42, false, @"refs\engine-turbine-60-v2-userupgrade.txt #492", new[] { 1 }), -1, 1, 0, 1, -1, 0),
+                     0.207797408f, 7.45867237E-06f, 5.38734957E-06f, 0.0007558026f));
+            l.Add(Pt(Sl(P("depot-out2", 2012, 42, false, @"refs\engine-turbine-60-v2-userupgrade.txt #493", new[] { 1 }), -1, 2, 0, 1, -5, 0),
+                     0.207802f, 0.0395599939f, 0.286199331f, 0.0544653051f));
+            // named: splitter Tab variants; the records carry model 39 / 40, not the item's LDB model 38
+            ProtoSpec m39 = Sl(P("splitter-m39", 2020, 39, false, @"refs\engine-turbine-60-v2-userupgrade.txt #279", new[] { 0, 0, 0, 0, 0, 0 }), 14, 15, 15, 14, 0, 0);
+            m39.FixedModel = 39; l.Add(m39);
+            ProtoSpec m40 = Sl(P("splitter-m40", 2020, 40, false, @"refs\engine-turbine-60-v2-userupgrade.txt #280", new[] { 0, 0, 0, 0, 0, 0 }), 14, 15, 15, 14, 0, 0);
+            m40.FixedModel = 40; l.Add(m40);
+            // named only and not requested by the engine today (parity with the CLI's ByName)
+            l.Add(Sl(P("splitter-priority", 2020, 38, false, @"refs\splitters.txt #2", new[] { 1, 0, 0, 0, 0, 0 }), 14, 15, 15, 14, 0, 0));
+            l.Add(Sl(P("splitter-belt", 2002, 36, false, @"refs\splitters.txt #10", null), 1, 0, 0, 1, 0, 0));
+            l.Add(Sl(P("belt-icon", 2002, 36, false, @"refs\lent-begin.txt #0", new[] { 1002, 0 }), 1, 0, 0, 1, 0, 0));
+            return l;
+        }
+
+        /// Prototype records the engine's Emitter clones: exactly the CLI host's set (CliPrototypes), model index from LDB.
         static E.PrototypeCells LoadPrototypes()
         {
             var pc = new E.PrototypeCells();
-            foreach (ItemProto it in LDB.items.dataArray)
+            foreach (ProtoSpec s in CliPrototypes())
             {
-                if (it == null || !it.CanBuild || it.prefabDesc == null) continue;
-                PrefabDesc pd = it.prefabDesc;
-                if (it.ID > short.MaxValue || pd.modelIndex > short.MaxValue) continue;
-                var b = Record(it.ID, pd.modelIndex);
-                if (pd.isBelt || pd.isPowerNode) b.parameters = new int[0];        // proven: belts [], tesla []
-                else if (pd.isInserter) b.parameters = new int[] { 1 };            // sorter [length]; the layout sets it
-                else if (pd.isSplitter) { b.parameters = new int[6]; Slots(b, 14, 15, 15, 14); }
-                else if (pd.isStorage) { b.parameters = new int[DepotParamCount]; Slots(b, 14, 15, 15, 14); }
-                else if (pd.isAssembler || pd.isLab) b.parameters = new int[] { 0 }; // proven: smelters, assemblers [0]
-                else b.parameters = new int[0];
-                string name = "item-" + it.ID;
-                pc.Add(name, b);
-                pc.SetDefault(it.ID, name);
-            }
-
-            // depot buffer cell (user's in-game edit, refs\engine-turbine-60-v2-userupgrade.txt #482, #491-#493):
-            // the sorters into / out of a depot carry the game's own pitch / tilt values
-            E.BpBuilding depot = pc.ProtoFor(2101);
-            if (depot != null) pc.Add("depot-mk1", depot.Clone());
-            ItemProto sorter2 = LDB.items.Select(2012);
-            if (sorter2 != null && sorter2.prefabDesc != null)
-            {
-                int m = sorter2.prefabDesc.modelIndex;
-                pc.Add("depot-in", Sorter(m, 359.929f, 359.792f, -0.001f, 0.286f));
-                pc.Add("depot-out1", Sorter(m, 0.208f, 0f, 0f, 0.001f));
-                pc.Add("depot-out2", Sorter(m, 0.208f, 0.04f, 0.286f, 0.054f));
-            }
-            // splitter Tab variants: same record, the layout sets modelIndex 39 / 40
-            E.BpBuilding split = pc.ProtoFor(2020);
-            if (split != null)
-            {
-                E.BpBuilding s39 = split.Clone(); s39.modelIndex = 39; pc.Add("splitter-m39", s39);
-                E.BpBuilding s40 = split.Clone(); s40.modelIndex = 40; pc.Add("splitter-m40", s40);
+                ItemProto it = LDB.items.Select(s.ItemId);
+                if (it == null || it.prefabDesc == null)
+                {
+                    Plugin.Log.LogWarning("prototype " + s.Name + ": item " + s.ItemId + " not in LDB, no record (the engine will not use it)");
+                    continue;
+                }
+                int model = s.FixedModel > 0 ? s.FixedModel : it.prefabDesc.modelIndex;
+                if (model <= 0 || model > short.MaxValue)
+                {
+                    Plugin.Log.LogWarning("prototype " + s.Name + ": LDB model index " + model + " unusable, no record");
+                    continue;
+                }
+                if (model != s.CliModel)
+                    Plugin.Log.LogWarning("prototype " + s.Name + ": LDB model " + model + " differs from the CLI record's " + s.CliModel
+                        + " (" + s.Source + "); using LDB");
+                var b = Record(s.ItemId, model);
+                b.parameters = (int[])s.Params.Clone();
+                b.outputToSlot = s.OutTo; b.inputFromSlot = s.InFrom; b.outputFromSlot = s.OutFrom; b.inputToSlot = s.InTo;
+                b.outputOffset = s.OutOff; b.inputOffset = s.InOff;
+                b.pitch = s.Pitch; b.pitch2 = s.Pitch2; b.tilt = s.Tilt; b.tilt2 = s.Tilt2;
+                pc.Add(s.Name, b);
+                if (s.Generic) pc.SetDefault(s.ItemId, s.Name);
             }
             return pc;
         }
-
-        const int DepotParamCount = 110;   // Depot Mk.I record in the user's in-game blueprint: 110 zero parameters
 
         static E.BpBuilding Record(int itemId, int model)
         {
@@ -278,19 +360,6 @@ namespace DSPCalculatorFlat
             b.tempOutputObjIdx = -1; b.tempInputObjIdx = -1;
             b.parameters = new int[0];
             return b;
-        }
-
-        static E.BpBuilding Sorter(int model, float pitch, float pitch2, float tilt, float tilt2)
-        {
-            var b = Record(2012, model);
-            b.pitch = pitch; b.pitch2 = pitch2; b.tilt = tilt; b.tilt2 = tilt2;
-            b.parameters = new int[] { 1 };
-            return b;
-        }
-
-        static void Slots(E.BpBuilding b, int outTo, int inFrom, int outFrom, int inTo)
-        {
-            b.outputToSlot = outTo; b.inputFromSlot = inFrom; b.outputFromSlot = outFrom; b.inputToSlot = inTo;
         }
 
         // ------------------------------------------------------------------ EngineResult -> BlueprintData
