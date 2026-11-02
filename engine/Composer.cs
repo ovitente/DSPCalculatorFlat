@@ -733,7 +733,10 @@ public class Composer
                 TailItems = r.InItems.Where(it => r.Step.IsExternal(plan, it)).ToArray(),   // raw lanes start with a tail
                 Data = gd,          // per-sorter throughput check, collider pitch
                 FinalQuarters = quarters, AlongEW = quarters % 2 == 1, Safe60 = spec.Safe60,
-                LabStackMax = spec.LabStackMax   // feat-labs: lab tower height cap
+                LabStackMax = spec.LabStackMax,  // feat-labs: lab tower height cap
+                // COATERS HOOK: proliferated step -> a spray coater on every input lane + the proliferator feed port
+                CoatItems = Coaters.Coated(r.Step) && spec.ProliferatorItem != 0 ? (int[])r.InItems.Clone() : null,
+                ProliferatorItem = spec.ProliferatorItem
             };
             Fragment f;
             try { f = Modules.MachineRow(rs); }
@@ -816,6 +819,7 @@ public class Composer
                 // stack on a producer line when that producer is the line top and feeds only this row
                 RowInfo bestP = null; LineInfo bestL = null;
                 bool rowHasRaw = r.InItems.Any(it => r.Step.IsExternal(plan, it)) || (noStackMulti && r.InItems.Length >= 3);   // raw lanes must start on the input edge
+                if (Coaters.Coated(r.Step) && spec.ProliferatorItem != 0) rowHasRaw = true;   // COATERS HOOK: never stacked (feed port below the row)
                 foreach (var e in edges.Where(e => e.To == r && !rowHasRaw))
                 {
                     RowInfo p = e.From;
@@ -980,6 +984,7 @@ public class Composer
                     }
                 }
             }
+            foreach (int[] t in Coaters.RouterBlocked(work)) { long k = K(t[0], t[1]); blocked.Add(k); aheadOfEnd.Remove(k); }   // COATERS HOOK
         }
 
         Bld PortBelt(Port p)
@@ -1086,6 +1091,13 @@ public class Composer
                 {
                     if (!r.Step.IsExternal(plan, r.InItems[i])) continue;
                     Port p = InPort(r, r.InItems[i]);
+                    rawFeeds.Add(new KeyValuePair<RowInfo, Port>(r, p));
+                    if (!(p.Y == edgeY && p.Dir == Dir.N)) { int id = nextConn++; rawConn[p] = id; Reserve(p.PrevX, p.PrevY, id); }
+                }
+            // COATERS HOOK: proliferator feed ports are block input lanes like the raw ones
+            foreach (var r in rowsOk)
+                foreach (Port p in r.Frag.Ports.Where(Coaters.IsFeedPort).ToList())
+                {
                     rawFeeds.Add(new KeyValuePair<RowInfo, Port>(r, p));
                     if (!(p.Y == edgeY && p.Dir == Dir.N)) { int id = nextConn++; rawConn[p] = id; Reserve(p.PrevX, p.PrevY, id); }
                 }
@@ -1359,7 +1371,9 @@ public class Composer
             Bld pb = PortBelt(p);
             int item = 0;
             foreach (int it in r.InItems) if (FindPort(r.Frag, "in:" + it) == p) item = it;
-            double rate = r.InRates[Array.IndexOf(r.InItems, item)];
+            bool coat = Coaters.IsFeedPort(p);   // COATERS HOOK: proliferator feed port carries its own item and rate
+            if (coat) item = p.Item;
+            double rate = coat ? p.Rate : r.InRates[Array.IndexOf(r.InItems, item)];
             if (pb == null) { errors.Add("composer: raw port " + p + " has no belt"); return; }
             Bld first = pb;
             if (id != 0)

@@ -125,6 +125,7 @@ public class Validator
             Ports();
             Icons();
             Power();
+            Coaters.Validate(L, plan, gd, R);   // COATERS HOOK: coater cells + proliferator lanes
             Summary();
         }
 
@@ -310,6 +311,7 @@ public class Validator
                     bool aBelt = a.Kind == Kind.Belt, cBelt = c.Kind == Kind.Belt;
                     if (aBelt && cBelt) continue;
                     if ((aBelt && c.Kind == Kind.Splitter) || (cBelt && a.Kind == Kind.Splitter)) continue;
+                    if (Coaters.PassesUnder(a, c) || Coaters.PassesUnder(c, a)) continue;   // COATERS HOOK: lane belt under its coater
                     if (Math.Abs(a.X - c.X) > 12 || Math.Abs(a.Y - c.Y) > 12) continue;   // no collider is that large here
                     double gap = PairGap(a, list[i].Value, c, list[j].Value, 1.0);   // > 0: separated along at least one axis
                     if (a.Kind == Kind.Machine && c.Kind == Kind.Machine && gap < minGap) { minGap = gap; minAt = a + " / " + c; }
@@ -454,7 +456,7 @@ public class Validator
             Func<Bld, Dir?> dout = b => b.Output != null && (b.Output.Kind == Kind.Belt || b.Output.Kind == Kind.Splitter) ? (Dir?)DirTo(b, b.Output) : null;
             foreach (Bld b in belts)
             {
-                if (!b.IsRaised || IsPortBelt(b)) continue;
+                if (!b.IsRaised || IsPortBelt(b) || Coaters.IsFeed(b)) continue;   // COATERS HOOK: feed cell checked in Coaters.Validate
                 string at = " at " + At(b.X, b.Y);
                 bool hr = Math.Abs(b.Z - 1.0) < 0.02 && InHighRun(b);
                 if (hr) high++;
@@ -492,7 +494,7 @@ public class Validator
             // runs: first raised node of every run
             foreach (Bld b in belts)
             {
-                if (!b.IsRaised || IsPortBelt(b) || Math.Abs(b.Z - 1.0) < 0.02 && InHighRun(b)) continue;
+                if (!b.IsRaised || IsPortBelt(b) || Coaters.IsFeed(b) || Math.Abs(b.Z - 1.0) < 0.02 && InHighRun(b)) continue;   // COATERS HOOK
                 Bld foot = MainPred(b);
                 if (foot != null && foot.IsRaised && !IsPortBelt(foot)) continue;
                 string at = " at " + At(b.X, b.Y);
@@ -1018,7 +1020,7 @@ public class Validator
             foreach (Bld s in sorters.Where(x => x.Input != null && x.Input.Kind == Kind.Machine && x.Output != null && x.Output.Kind == Kind.Belt))
                 foreach (int it in DropItems(s))
                     if (!Reaches(s.Output, it)) R.Fail("output " + N(it) + " of machine at " + At(s.Input.X, s.Input.Y) + " reaches neither a consumer nor a block output port");
-            foreach (Port p in L.Ports.Where(x => x.Kind == PortKind.In && x.Belt != null && items.ContainsKey(x.Belt)))
+            foreach (Port p in L.Ports.Where(x => x.Kind == PortKind.In && x.Belt != null && items.ContainsKey(x.Belt) && !Coaters.IsFeedPort(x)))   // COATERS HOOK: feeds coaters, not machines
                 if (!Reaches(p.Belt, p.Item)) R.Fail("block input " + N(p.Item) + " at (" + p.X + "," + p.Y + ") reaches no consumer");
             // belt metadata agrees with the flow
             int bad = 0;
@@ -1240,6 +1242,7 @@ public class Validator
             {
                 if (splitterTouch.Contains(b) || L.Ports.Any(p => p.Kind == PortKind.Out && p.Belt == b)) continue;
                 if (Peek(picksAt, b).Count > 0) continue;
+                if (Coaters.IsFeed(b)) continue;   // COATERS HOOK: feed chain ends over its last coater
                 int tail = 0; Bld n = b;
                 while (n != null && Peek(picksAt, n).Count == 0 && Peek(dropsAt, n).Count == 0) { tail++; n = MainPred(n); }
                 if (tail == 0) continue;   // ends on a drop tile: output flow checks report it
@@ -1324,7 +1327,7 @@ public class Validator
             // game limits (PowerSystem cover / connect distance, see GameData.GameTeslaCoverTiles); the game-proven
             // refs\engine-electric-motor-120-v3-user.txt reaches 8.1 tiles
             double cover = GameData.GameTeslaCoverTiles, link = GameData.GameTeslaLinkTiles;
-            var powered = L.All.Where(b => b.Kind == Kind.Machine || b.Kind == Kind.Sorter).ToList();
+            var powered = L.All.Where(b => b.Kind == Kind.Machine || b.Kind == Kind.Sorter || Coaters.IsCoater(b)).ToList();   // COATERS HOOK
             if (powered.Count == 0) return;
             if (towers.Count == 0) { R.Fail("no tesla tower for " + powered.Count + " powered buildings"); return; }
             double maxD = 0; int bad = 0;

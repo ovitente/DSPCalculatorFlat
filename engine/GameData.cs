@@ -61,6 +61,10 @@ public class GameData
     /// thumbnail text. Filled by the host (CLI: analysis\raw-protos.json; addon: LDB). Empty = no icon tags.
     public readonly Dictionary<int, string> IconTags = new Dictionary<int, string>();
 
+    /// COATERS HOOK: sprays per proliferator item (ItemProto.HpMax: Mk.I 12, Mk.II 24, Mk.III 60). Filled by the host
+    /// (CLI: analysis\raw-protos.json); empty = Coaters' built-in copy of the same game values.
+    public readonly Dictionary<int, int> SprayCounts = new Dictionary<int, int>();
+
     /// Plain-value construction (no file I/O in the engine): the host adds items, recipes, machines and colliders
     /// through the public dictionaries and these helpers. CLI loader: DspFlat.Host.GameDataFiles.Load.
     public void AddItem(ItemDef it)
@@ -148,6 +152,7 @@ public class GameData
         var l = new List<double[]>();
         if (b.Kind == Kind.Machine) l.Add(new[] { b.X, b.Y });
         else if (b.Kind == Kind.Sorter) { l.Add(new[] { b.X, b.Y }); l.Add(new[] { (b.X + b.X2) / 2, (b.Y + b.Y2) / 2 }); }
+        else if (Coaters.IsCoater(b)) l.Add(new[] { b.X, b.Y });   // COATERS HOOK: spray coater 90 kW (game-data powerWorkW)
         return l;
     }
 

@@ -140,8 +140,12 @@ fails if a core file uses `System.IO`, `Console.`, `Environment.`, `CurrentCultu
 - **Input edge** (decision 7): every block input lane (raw, marked external, dropped-step products) starts with its icon
   tail on the outermost row of `InEdge` (composer extends lanes that start higher; Validator "input edge" fails lanes
   that do not).
-- `LabStackMax` and `ProliferatorItemId` are accepted but unused (warning when a proliferator is set or a step has
-  `IncLevel > 0`: no spray coaters yet).
+- **Spray coaters** (`engine/Coaters.cs`, phase 4): every step with `IncLevel > 0` gets a spray coater (2313) on each
+  input lane below its first pickup, all fed by one external proliferator lane (`ProliferatorItemId`; 0 = inferred from
+  `IncLevel` = ItemProto.Ability 1/2/4, with a warning) that starts on the input edge with an icon tail and runs as a
+  z 1 feed belt one tile behind every coater (game geometry: user's `7-logi\L1.txt`, game 0.10.35; see the file header).
+  Proliferator demand = coated lane flow / sprays per item (ItemProto.HpMax 12/24/60; `GameData.SprayCounts`).
+  Prototype record: `7-logi\L1.txt` #36 (CLI host, optional). Hook points in shared files are marked `COATERS HOOK`.
 - **Proliferator rates**: with `IncLevel > 0` the machine speed is derived from the plan's numbers
   (`output * time / (outCount * 60 * MachineCount)`), so the layout carries exactly the plan's rates.
 - **`EngineResult`** extensions for hosts: `GameVersion`, `Header` (`BpHeader`), `Notes` (composer notes), `Plan` (the

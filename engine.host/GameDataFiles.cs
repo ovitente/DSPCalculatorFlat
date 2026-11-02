@@ -123,6 +123,10 @@ public static class GameDataFiles
         foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text,
             "\"ID\":\\s*(\\d+),[^{}]*?\"IconTag\":\\s*\"([A-Za-z0-9]*)\""))
             gd.IconTags[int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)] = m.Groups[2].Value;
+        // spray coaters: sprays per proliferator item = ItemProto.HpMax (Mk.I 12, Mk.II 24, Mk.III 60)
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text,
+            "\"ID\":\\s*(114[123]),[^{}]*?\"HpMax\":\\s*(\\d+)"))
+            gd.SprayCounts[int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)] = int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);
     }
 
     static double[] Nums(object o)

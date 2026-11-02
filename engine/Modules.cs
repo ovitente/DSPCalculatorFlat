@@ -38,6 +38,9 @@ public class RowSpec
     public bool AlongEW, Safe60;
     public int FinalQuarters;                 // quarter turns applied after MachineRow (machine yaw in the blueprint)
     public int LabStackMax = 15;              // feat-labs: Matrix Lab tower height cap (SlotRows / LabTowers)
+    /// COATERS HOOK: input items whose lanes get a spray coater, and the proliferator on the feed port (Coaters.AddToRow).
+    public int[] CoatItems;
+    public int ProliferatorItem;
     public readonly List<string> Problems = new List<string>();  // filled by MachineRow: copy into Layout.Errors
     public readonly List<string> Notes = new List<string>();     // filled by MachineRow: informational
 }
@@ -182,6 +185,9 @@ public static class Modules
         int y0 = -1, y1 = (spec.Count - 1) * pitch + 1;          // output lane covers every machine's footprint rows
         var lanes = new Dictionary<int, List<Bld>>();             // lane x -> tiles (index = y - laneStart[x])
         var laneStart = new Dictionary<int, int>();
+        // COATERS HOOK: coater line c of a proliferated row (Coaters.cs cell COATER); lanes start lower to make room
+        int coatY = Coaters.RowCoaterY(spec, reqs.Where(r => r.In && Coaters.Coats(spec, r.Item)).Select(r => r.Geos.Min(g => g.BeltDy)));
+        var laneItem = new Dictionary<int, int>();
         foreach (var r in reqs)
         {
             int lx = r.Geos[0].BeltDx;
@@ -194,7 +200,9 @@ public static class Modules
             // block input lanes start one belt before the first pickup (the tail, user's edit of
             // refs\engine-electric-motor-120-v3-user.txt), never above the row's bottom line
             int yStart = y0;
-            if (r.In && spec.TailItems != null && spec.TailItems.Contains(r.Item)) yStart = Math.Min(y0, r.Geos.Min(g => g.BeltDy) - 1);
+            bool tail = r.In && spec.TailItems != null && spec.TailItems.Contains(r.Item);
+            if (tail) yStart = Math.Min(y0, r.Geos.Min(g => g.BeltDy) - 1);
+            if (r.In) { yStart = Coaters.LaneStart(spec, r.Item, tail, yStart, coatY); laneItem[lx] = r.Item; }   // COATERS HOOK
             laneStart[lx] = yStart;
             for (int y = yStart; y <= yEnd; y++)
             {
@@ -226,6 +234,8 @@ public static class Modules
                     f.Add(s);
                 }
         }
+
+        Coaters.AddToRow(spec, f, coatY, lanes, laneStart, laneItem, sideA == Dir.E ? 1 : -1);   // COATERS HOOK
 
         int q = (int)spec.Flow;
         if (q != 0) f.RotateCW(q, 0, 0);
@@ -772,6 +782,7 @@ public static class Modules
                     if (hit) blocked.Add(K(x, y));
                 }
         }
+        Coaters.BlockTowerTiles(layout, gd, blocked);   // COATERS HOOK: no tower under a feed node or against a coater
     }
 
     static void Collect(Layout layout, List<double[]> pts, HashSet<long> blocked)
