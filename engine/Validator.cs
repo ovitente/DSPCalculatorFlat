@@ -454,9 +454,13 @@ public class Validator
             Action<string> fail = m => { if (bad++ < 10) R.Fail(m); };
             Func<Bld, Dir?> din = b => { Bld p = MainPred(b); if (p != null) return DirTo(p, b); if (b.Input != null && b.Input.Kind == Kind.Splitter) return DirTo(b.Input, b); return null; };
             Func<Bld, Dir?> dout = b => b.Output != null && (b.Output.Kind == Kind.Belt || b.Output.Kind == Kind.Splitter) ? (Dir?)DirTo(b, b.Output) : null;
+            HashSet<Bld> busNodes = EdgeBus.BusNodes(belts);   // EDGEBUS HOOK: stacked edge bus runs (rules 2/3) are checked by EdgeBus.Check
+            foreach (string m in EdgeBus.Check(belts, busNodes, (x, y) => { Bld ob; return occ.TryGetValue(K(x, y), out ob) ? ob : null; }, sorters, R.Warn)) fail(m);   // EDGEBUS HOOK
+            if (busNodes.Count > 0) R.Note("edge bus: " + busNodes.Count + " stacked node(s) (rules 2/3, refs\\engine-missile-turret-7.5-v1-useredit3.txt top bus)");   // EDGEBUS HOOK
             foreach (Bld b in belts)
             {
                 if (!b.IsRaised || IsPortBelt(b) || Coaters.IsFeed(b)) continue;   // COATERS HOOK: feed cell checked in Coaters.Validate
+                if (busNodes.Contains(b)) continue;   // EDGEBUS HOOK
                 string at = " at " + At(b.X, b.Y);
                 bool hr = Math.Abs(b.Z - 1.0) < 0.02 && InHighRun(b);
                 if (hr) high++;
@@ -495,6 +499,7 @@ public class Validator
             foreach (Bld b in belts)
             {
                 if (!b.IsRaised || IsPortBelt(b) || Coaters.IsFeed(b) || Math.Abs(b.Z - 1.0) < 0.02 && InHighRun(b)) continue;   // COATERS HOOK
+                if (busNodes.Contains(b)) continue;   // EDGEBUS HOOK
                 Bld foot = MainPred(b);
                 if (foot != null && foot.IsRaised && !IsPortBelt(foot)) continue;
                 string at = " at " + At(b.X, b.Y);

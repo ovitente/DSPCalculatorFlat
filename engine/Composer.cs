@@ -18,7 +18,7 @@ using System.Text;
 namespace DspFlat.Engine
 {
 
-public class Composer
+public partial class Composer   // EDGEBUS HOOK: partial (engine\EdgeBus.cs extends Attempt)
 {
     readonly GameData gd;
     readonly BlockSpec spec;
@@ -64,10 +64,13 @@ public class Composer
         // route order retry: edges that failed are routed first in the next try (same gaps)
         var prio = prioIn != null ? new HashSet<string>(prioIn) : new HashSet<string>();
         Attempt att = null; Layout l = null;
+        bool noBus = false;   // EDGEBUS HOOK
         for (int t = 0; t < 4; t++)
         {
             att = new Attempt(gd, spec, plan, rowGap, lineGap, strategy, mode, prio, raise, heavy, gaps);
+            att.NoBus = noBus;   // EDGEBUS HOOK
             l = att.Run();
+            if (!noBus && att.BusUsed && l.Errors.Count > 0) { noBus = true; t--; continue; }   // EDGEBUS HOOK: bus broke other routes -> same try without it
             if (att.Failed.Count == 0 || att.Failed.IsSubsetOf(prio)) break;
             prio.UnionWith(att.Failed);
         }
@@ -428,7 +431,7 @@ public class Composer
 
     class Goal { public Dir? NextDir; public Dir? Entry; public Bld Target; public bool SideJoin; public bool NoBridgeLanding; }
 
-    class Attempt
+    partial class Attempt   // EDGEBUS HOOK: partial
     {
         readonly GameData gd; readonly BlockSpec spec; readonly ProductionPlan plan;
         readonly int rowGap, lineGap;
@@ -1155,6 +1158,7 @@ public class Composer
             // order strategy: 0 shortest first; 1 highest entry first (inner corridors), 2 lowest entry first
             Func<Edge, int> ord = e => strategy == 1 ? -e.Target.Y * 1000 + Dist(e.Source, e.Target)
                                      : strategy == 2 ? e.Target.Y * 1000 + Dist(e.Source, e.Target) : Dist(e.Source, e.Target);
+            EdgeBusRoute(primaries, tgtConn);   // EDGEBUS HOOK (engine\EdgeBus.cs, rules 2/3): long final-machine lanes on one stacked bus
             foreach (var e in primaries.Where(e => !e.Done).OrderBy(e => priority.Contains(Key(e)) ? 0 : 1).ThenBy(ord))
             {
                 int id = tgtConn[e.Target];
