@@ -30,6 +30,9 @@ namespace DspFlat.Engine
     {
         /// Switch for the generative rules (14 margin, 13 tower pruning). Off = the pre-rules engine behaviour.
         public static bool Enabled = true;
+        /// Rule 14 inside Composer.Compose. Off: the Composer's row split does not yet follow the raised counts (turret 7.5
+        /// failed validation with it on, 2026-11-02). ApplyMargin / CheckMargin work on a plan on their own.
+        public static bool MarginInCompose = false;
 
         static string F(double v) { return v.ToString("0.##", CultureInfo.InvariantCulture); }
         static string At(double x, double y) { return "(" + F(x) + "," + F(y) + ")"; }

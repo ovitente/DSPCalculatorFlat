@@ -116,7 +116,9 @@ public class Composer
         Stopped = false;
         // rules hook (engine\Rules.cs, rule 14): margin for zero-margin steps whose lane is split (mutates the plan, so the
         // Validator's supply check sees the same machine counts)
-        if (Rules.Enabled) Notes.AddRange(Rules.ApplyMargin(plan));
+        // OFF by default (Rules.MarginInCompose): with it the turret 7.5 rows still got 3 copper / 1 coil machines and the coil
+        // route failed (validator: 'plan needs 4 machines for Copper Ingot, layout has 3'); the row split must learn the new counts first
+        if (Rules.Enabled && Rules.MarginInCompose) Notes.AddRange(Rules.ApplyMargin(plan));
         int attempts = 0;
         Tried best = null, bestOk = null;
         // compactness: every gap configuration / mode / route order / raise variant is tried; among the attempts without
