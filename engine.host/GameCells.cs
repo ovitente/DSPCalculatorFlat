@@ -87,6 +87,8 @@ public class Cells
                                      "smelter-plane", "belt-mk1", "sorter-mk1", "splitter" })
             if (ByName.ContainsKey(n) && !byItem.ContainsKey(ByName[n].ItemId)) byItem[ByName[n].ItemId] = n;
 
+        SoftCoaterCell();
+
         foreach (var kv in ByName) Prototypes.Add(kv.Key, GameBp.ToRecord(kv.Value.Proto));
         foreach (var kv in byItem) Prototypes.SetDefault(kv.Key, kv.Value);
 
@@ -95,6 +97,30 @@ public class Cells
         CheckParams("belt-icon", new[] { Ids.CopperOre, 0 });
         CheckSorterTable();
         CheckBeltAndSplitter();
+    }
+
+    /// Spray coater prototype (engine\Coaters.cs): the user's game-0.10.35 blueprint 7-logi\L1.txt, coater #36 at (3,7)
+    /// (model 120, slots 14/15/15/14, no links). Optional: when the file is missing or differs, only layouts with coaters
+    /// fail to emit ("no prototype for item 2313"); every other block keeps working.
+    public const string CoaterSource = @"7-logi\L1.txt";
+    public const int CoaterIndex = 36;
+    void SoftCoaterCell()
+    {
+        string path = Resolve(BlueprintDir, CoaterSource);
+        if (!File.Exists(path)) { Log.Add("spray coater prototype: " + path + " not found (coater layouts cannot be emitted)"); return; }
+        try
+        {
+            Dictionary<int, object> d = GameBp.ByIndex(GameBp.Load(path));
+            object r;
+            if (!d.TryGetValue(CoaterIndex, out r) || GameBp.In(r, "itemId") != Coaters.SprayCoater
+                || Math.Abs(GameBp.Fl(r, "localOffset_x") - 3) > 0.01 || Math.Abs(GameBp.Fl(r, "localOffset_y") - 7) > 0.01)
+            { Log.Add("spray coater prototype: " + CoaterSource + " #" + CoaterIndex + " is not the coater at (3,7)"); return; }
+            ByName["spray-coater"] = new UnitCell { Name = "spray-coater", SourceFile = CoaterSource, Index = CoaterIndex, ItemId = Coaters.SprayCoater, X = 3, Y = 7,
+                Proto = r, Status = "template", Note = "spray coater, user's blueprint (game 0.10.35)" };
+            byItem[Coaters.SprayCoater] = "spray-coater";
+            Log.Add("cell spray-coater = " + CoaterSource + " #" + CoaterIndex + " item 2313 ok");
+        }
+        catch (Exception e) { Log.Add("spray coater prototype: cannot read " + path + ": " + (e.InnerException ?? e).Message); }
     }
 
     // ---- source access ----

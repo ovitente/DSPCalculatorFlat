@@ -9,7 +9,7 @@ using System.Text;
 using DspFlat.Engine;
 using DspFlat.Host;
 
-public static class SelfTest
+public static partial class SelfTest
 {
     static int passed, failed, skipped;
     static string root, bpDir;
@@ -88,6 +88,9 @@ public static class SelfTest
         Case("micro flat: gear 120 via PlanInput -> FlatEngine.Generate == Composer, records serialize + export check", MicroFlatGear);
         Case("micro flat: unsupported building / byproduct steps dropped, products become input lanes; target dropped -> error", MicroFlatDrop);
         Case("micro flat: cancel stops FlatEngine.Generate with an error, no buildings", MicroFlatCancel);
+        // spray coaters (engine\Coaters.cs, COATERS HOOK; cases in tests\SelfTestCoaters.cs)
+        Case("micro coaters: 2-input final step incLevel 1 -> 2 coaters + 1 proliferator lane with icon tail, valid + export", MicroCoaters);
+        Case("micro coaters: incLevel 0 -> no coaters, no proliferator lane; validator rejects a coater without its feed node", MicroCoatersNone);
         Console.WriteLine("selftest: " + passed + " passed, " + failed + " failed, " + skipped + " skipped");
         return failed == 0 && skipped == 0 ? 0 : 1;
     }

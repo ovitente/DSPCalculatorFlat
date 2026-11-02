@@ -87,7 +87,7 @@ public class PlanStep
     public int BuildingItemId;      // 2302 arc smelter, 2303 assembler Mk.I, ... as chosen by the calculator
     public double MachineCount;     // exact (calculator assemblerCount, proliferator already applied)
     public int Machines;            // rounded up count to build (0 = ceil(MachineCount))
-    public int IncLevel;            // -1/0 = no proliferator; >0 = spray coaters on this step's inputs (not placed yet)
+    public int IncLevel;            // -1/0 = no proliferator; >0 = spray coaters on this step's inputs (engine\Coaters.cs)
     public bool ExtraProducts;      // calculator isInc (true) vs speed-up (false)
     public Dictionary<int, double> InputsPerMin = new Dictionary<int, double>();   // itemId -> rate
     public Dictionary<int, double> OutputsPerMin = new Dictionary<int, double>();
@@ -102,7 +102,7 @@ public class LayoutOptions
     public int SorterItemMax = 2012;    // 2011/2012/2013/2014 cap (Mk.III / pile not supported yet: clamped to Mk.II)
     public int LabStackMax = 15;        // vertical construction tech cap (labs not placed yet)
     public int TimeBudgetMs = 60000;
-    public int ProliferatorItemId = 0;  // 1141/1142/1143; 0 = none
+    public int ProliferatorItemId = 0;  // 1141/1142/1143 on the external proliferator lane; 0 = inferred from IncLevel
     // ---- engine extensions (defaults = the calculator addon's behaviour; the CLI maps its flags here) ----
     public Dir InEdge = Dir.S, OutEdge = Dir.N;       // block edges for input lanes / product
     public bool Safe60;                               // E-W pitch/colliders safe up to 60 deg latitude

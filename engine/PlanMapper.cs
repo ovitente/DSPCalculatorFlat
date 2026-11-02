@@ -64,13 +64,23 @@ public static class PlanMapper
         spec.MaxRow = opt.MaxRow > 0 ? opt.MaxRow : 12;
         spec.ShortDesc = opt.ShortDesc; spec.Desc = opt.Desc;
         if (opt.OwnSupply != null) spec.OwnSupply.UnionWith(opt.OwnSupply);
-        if (opt.ProliferatorItemId != 0) res.Warnings.Add("proliferator " + n(opt.ProliferatorItemId) + ": spray coaters are not placed yet");
+        // COATERS HOOK: proliferator on the external proliferator lane (engine\Coaters.cs); inferred from the steps' inc
+        // level (= ItemProto.Ability 1/2/4) when the options name none
+        if (opt.ProliferatorItemId != 0 && !Coaters.IsProliferator(opt.ProliferatorItemId))
+            res.Warnings.Add("proliferator item " + opt.ProliferatorItemId + " is not Proliferator Mk.I-III; no spray coaters");
+        else spec.ProliferatorItem = opt.ProliferatorItemId;
+        if (spec.ProliferatorItem == 0 && opt.ProliferatorItemId == 0)
+        {
+            int lvl = input.Steps.Where(s => s.IncLevel > 0).Select(s => s.IncLevel).DefaultIfEmpty(0).Max();
+            int guess = Coaters.ItemForLevel(lvl);
+            if (lvl > 0 && guess != 0) { spec.ProliferatorItem = guess; res.Warnings.Add("proliferator not given: using " + n(guess) + " from inc level " + lvl); }
+            else if (lvl > 0) res.Warnings.Add("proliferator not given and inc level " + lvl + " matches no proliferator: no spray coaters");
+        }
         res.Spec = spec;
 
         // ---- steps: keep the placeable ones, drop the rest (products -> input lanes)
         var external = new HashSet<int>(input.ExternalItems ?? new List<int>());
         var kept = new List<KeyValuePair<PlanStep, RecipeDef>>();
-        bool prolifWarned = false;
         foreach (PlanStep ps in input.Steps)
         {
             RecipeDef r = gd.Recipe(ps.RecipeId);
@@ -87,7 +97,6 @@ public static class PlanMapper
                     + string.Join(", ", outs.Select(o => n(o)).ToArray()) + " arrive(s) on input lanes");
                 continue;
             }
-            if (ps.IncLevel > 0 && !prolifWarned) { res.Warnings.Add("proliferator: spray coaters are not placed yet (rates are taken from the plan as given)"); prolifWarned = true; }
             kept.Add(new KeyValuePair<PlanStep, RecipeDef>(ps, r));
         }
         if (res.Errors.Count > 0) return res;
@@ -143,6 +152,7 @@ public static class PlanMapper
                 if (Math.Abs(derived - baseSpeed) > 1e-6 * baseSpeed) speed = derived;
             }
             var s = new Step { Item = item, Recipe = r, MachineItem = ps.BuildingItemId, Speed = speed };
+            if (ps.IncLevel > 0 && spec.ProliferatorItem != 0) s.IncLevel = ps.IncLevel;   // COATERS HOOK
             s.MachinesExact = ps.MachineCount > 0 ? ps.MachineCount : Solver.MachinesFor(r, item, outRate, speed);
             s.Machines = Math.Max(Math.Max(ps.Machines, (int)Math.Ceiling(s.MachinesExact - Eps)), 1);
             s.Outputs.Add(new ItemRate(item, outRate));
@@ -240,7 +250,7 @@ public static class PlanMapper
         var p = new PlanInput { TargetItemId = plan.TargetItem, TargetPerMin = plan.TargetRate };
         foreach (Step s in plan.Steps)
         {
-            var ps = new PlanStep { RecipeId = s.Recipe != null ? s.Recipe.Id : 0, BuildingItemId = s.MachineItem, MachineCount = s.MachinesExact, Machines = s.Machines };
+            var ps = new PlanStep { RecipeId = s.Recipe != null ? s.Recipe.Id : 0, BuildingItemId = s.MachineItem, MachineCount = s.MachinesExact, Machines = s.Machines, IncLevel = s.IncLevel };
             foreach (ItemRate x in s.Inputs) { double v; ps.InputsPerMin.TryGetValue(x.Item, out v); ps.InputsPerMin[x.Item] = v + x.Rate; }
             foreach (ItemRate x in s.Outputs) { double v; ps.OutputsPerMin.TryGetValue(x.Item, out v); ps.OutputsPerMin[x.Item] = v + x.Rate; }
             ps.ExternalInputs.AddRange(s.External);
@@ -256,6 +266,7 @@ public static class PlanMapper
             o.InEdge = spec.InEdge; o.OutEdge = spec.OutEdge; o.Safe60 = spec.Safe60; o.Buffer = spec.Buffer;
             o.OwnSupply.AddRange(spec.OwnSupply); o.MaxRow = spec.MaxRow;
             o.ShortDesc = spec.ShortDesc; o.Desc = spec.Desc;
+            o.ProliferatorItemId = spec.ProliferatorItem;
             o.TimeBudgetMs = 0;   // CLI: no hard limit, the composer keeps its per-mode-set budget (EngineTuning.ComposeBudgetMs)
         }
         return p;

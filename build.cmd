@@ -15,6 +15,6 @@ findstr /n /r /c:"^using System\.IO" /c:"Console\." /c:"Environment\." /c:"Curre
 if not errorlevel 1 (echo engine core has a forbidden side effect, see the lines above & exit /b 1)
 
 "%CSC%" %OPT% /target:library /out:"%BIN%\DspFlat.Engine.dll" /r:System.Core.dll "%HERE%engine\*.cs" || exit /b 1
-"%CSC%" %OPT% /out:"%BIN%\MakeBlock.exe" /r:"%BIN%\DspFlat.Engine.dll" /r:System.Web.Extensions.dll /r:System.Core.dll "%HERE%engine.host\*.cs" "%HERE%cli\MakeBlock.cs" "%HERE%tests\SelfTest.cs" || exit /b 1
+"%CSC%" %OPT% /out:"%BIN%\MakeBlock.exe" /r:"%BIN%\DspFlat.Engine.dll" /r:System.Web.Extensions.dll /r:System.Core.dll "%HERE%engine.host\*.cs" "%HERE%cli\MakeBlock.cs" "%HERE%tests\SelfTest.cs" "%HERE%tests\SelfTestCoaters.cs" || exit /b 1
 "%CSC%" %OPT% /out:"%BIN%\SelfTest.exe" /main:SelfTestMain /r:"%BIN%\DspFlat.Engine.dll" /r:System.Web.Extensions.dll /r:System.Core.dll "%HERE%engine.host\*.cs" "%HERE%cli\MakeBlock.cs" "%HERE%tests\*.cs" || exit /b 1
 echo built %BIN%\DspFlat.Engine.dll, MakeBlock.exe, SelfTest.exe

@@ -278,6 +278,7 @@ public class Footprints
     public int[] Size(int itemId)
     {
         if (Ids.IsSorter(itemId)) return new[] { 0, 0 };
+        if (itemId == Coaters.SprayCoater) return new[] { 0, 0 };   // COATERS HOOK: belt addon, sits over a lane tile
         if (Ids.IsBelt(itemId) || itemId == Ids.Tesla || itemId == Ids.Splitter) return new[] { 1, 1 };
         switch (itemId)
         {
@@ -455,6 +456,8 @@ public class BlockSpec
     /// Buffer depot at the product end of the block (user rule 2026-10-31, cell DEPOT_BUFFER); --no-buffer disables it.
     /// Kit mode: only on the final product module.
     public bool Buffer = true;
+    /// COATERS HOOK: proliferator item on the external proliferator lane (1141/1142/1143; 0 = none, engine\Coaters.cs).
+    public int ProliferatorItem;
 }
 
 // ------------------------------------------------------------------ plan (Solver output)
@@ -480,6 +483,8 @@ public class Step
     public List<int> ConsumerSteps = new List<int>(); // indices into ProductionPlan.Steps (empty = block output)
     /// Inputs this step takes from outside the block although the plan has a step for them (BlockSpec.RawFor).
     public HashSet<int> External = new HashSet<int>();
+    /// COATERS HOOK: calculator incLevel (> 0 = spray coaters on every input lane of this step, engine\Coaters.cs).
+    public int IncLevel;
     /// True when the item reaches this step through a block input lane (no step makes it, or BlockSpec.RawFor).
     public bool IsExternal(ProductionPlan plan, int item) { return External.Contains(item) || plan == null || plan.StepFor(item) == null; }
     public override string ToString()
