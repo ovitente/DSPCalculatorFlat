@@ -9,9 +9,10 @@ using System.Text;
 using DspFlat.Engine;
 using DspFlat.Host;
 
-public static class SelfTest
+public static partial class SelfTest
 {
     static int passed, failed, skipped;
+    static partial void RunLabCases();   // feat-labs: implemented in SelfTestLabs.cs (SelfTest.exe only)
     static string root, bpDir;
     static GameData gd;
     static Cells cells;
@@ -88,6 +89,7 @@ public static class SelfTest
         Case("micro flat: gear 120 via PlanInput -> FlatEngine.Generate == Composer, records serialize + export check", MicroFlatGear);
         Case("micro flat: unsupported building / byproduct steps dropped, products become input lanes; target dropped -> error", MicroFlatDrop);
         Case("micro flat: cancel stops FlatEngine.Generate with an error, no buildings", MicroFlatCancel);
+        RunLabCases();   // feat-labs: Matrix Lab towers, collider rows (SelfTestLabs.cs; partial method, absent in MakeBlock.exe)
         Console.WriteLine("selftest: " + passed + " passed, " + failed + " failed, " + skipped + " skipped");
         return failed == 0 && skipped == 0 ? 0 : 1;
     }

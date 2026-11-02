@@ -100,7 +100,7 @@ public class LayoutOptions
 {
     public int BeltItemMax = 2002;      // 2001/2002/2003 Mk.I/II/III cap (Mk.III not supported yet: clamped to Mk.II)
     public int SorterItemMax = 2012;    // 2011/2012/2013/2014 cap (Mk.III / pile not supported yet: clamped to Mk.II)
-    public int LabStackMax = 15;        // vertical construction tech cap (labs not placed yet)
+    public int LabStackMax = 15;        // vertical construction tech cap: Matrix Lab tower height (labs in one stack)
     public int TimeBudgetMs = 60000;
     public int ProliferatorItemId = 0;  // 1141/1142/1143; 0 = none
     // ---- engine extensions (defaults = the calculator addon's behaviour; the CLI maps its flags here) ----

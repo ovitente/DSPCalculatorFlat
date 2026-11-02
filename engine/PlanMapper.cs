@@ -12,14 +12,22 @@ namespace DspFlat.Engine
 /// Which plan steps the layout engine can build today. Extend here when the Composer learns new buildings.
 public static class StepSupport
 {
-    /// Buildings with proven geometry (sorter cells, pitches, prototypes): arc/plane smelter, assembler Mk.I-III.
-    public static readonly HashSet<int> Buildings = new HashSet<int> { Ids.ArcSmelter, Ids.PlaneSmelter, Ids.AsmMk1, Ids.AsmMk2, Ids.AsmMk3 };
+    /// Buildings with proven geometry (sorter cells, pitches, prototypes): arc/plane smelter, assembler Mk.I-III,
+    /// Matrix Lab (towers, LabTowers.cs) and Miniature Particle Collider (Collider.cs).
+    public static readonly HashSet<int> Buildings = new HashSet<int> { Ids.ArcSmelter, Ids.PlaneSmelter, Ids.AsmMk1, Ids.AsmMk2, Ids.AsmMk3,
+                                                                       Ids.MatrixLab, Ids.Collider };
 
     /// null when the step can be built, else the reason it is dropped (its products then arrive on input lanes).
     public static string WhyNot(GameData gd, RecipeDef r, int building)
     {
-        if (!Buildings.Contains(building)) return "building " + Name(gd, building) + " is not supported yet (only arc/plane smelters and assemblers Mk.I-III)";
+        if (!Buildings.Contains(building)) return "building " + Name(gd, building) + " is not supported yet (only arc/plane smelters, assemblers Mk.I-III, Matrix Lab, Miniature Particle Collider)";
         if (r.Outputs.Count != 1) return "recipe has byproducts";
+        // labs / colliders: only the input counts their cell tables cover (e.g. Universe Matrix with 6 inputs is dropped)
+        if (SlotRows.Handles(building))
+        {
+            string why = SlotRows.WhyNot(gd, r, building);
+            if (why != null) return Name(gd, building) + ": " + why;
+        }
         return null;
     }
 
@@ -63,6 +71,7 @@ public static class PlanMapper
         spec.InEdge = opt.InEdge; spec.OutEdge = opt.OutEdge; spec.Safe60 = opt.Safe60; spec.Buffer = opt.Buffer;
         spec.MaxRow = opt.MaxRow > 0 ? opt.MaxRow : 12;
         spec.ShortDesc = opt.ShortDesc; spec.Desc = opt.Desc;
+        spec.LabStackMax = opt.LabStackMax > 0 ? opt.LabStackMax : 15;   // feat-labs
         if (opt.OwnSupply != null) spec.OwnSupply.UnionWith(opt.OwnSupply);
         if (opt.ProliferatorItemId != 0) res.Warnings.Add("proliferator " + n(opt.ProliferatorItemId) + ": spray coaters are not placed yet");
         res.Spec = spec;
@@ -256,6 +265,7 @@ public static class PlanMapper
             o.InEdge = spec.InEdge; o.OutEdge = spec.OutEdge; o.Safe60 = spec.Safe60; o.Buffer = spec.Buffer;
             o.OwnSupply.AddRange(spec.OwnSupply); o.MaxRow = spec.MaxRow;
             o.ShortDesc = spec.ShortDesc; o.Desc = spec.Desc;
+            o.LabStackMax = spec.LabStackMax;   // feat-labs
             o.TimeBudgetMs = 0;   // CLI: no hard limit, the composer keeps its per-mode-set budget (EngineTuning.ComposeBudgetMs)
         }
         return p;
