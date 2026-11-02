@@ -88,6 +88,11 @@ public static class SelfTest
         Case("micro flat: gear 120 via PlanInput -> FlatEngine.Generate == Composer, records serialize + export check", MicroFlatGear);
         Case("micro flat: unsupported building / byproduct steps dropped, products become input lanes; target dropped -> error", MicroFlatDrop);
         Case("micro flat: cancel stops FlatEngine.Generate with an error, no buildings", MicroFlatCancel);
+        // lanes (PLAN.md decisions 7, 8, 9; engine\Lanes.cs)
+        Case("micro lanes: tier choice helpers (cheapest belt/sorter inside the cap, floor(lane / demand), pile cap -> Mk.III)", MicroLanesHelpers);
+        Case("micro lanes: 13 smelters (11.9 exact, 714/min) on 720/min Mk.II -> 2 parallel lanes of 7 + 6, side by side on the edge", MicroLanesSplit13);
+        Case("micro lanes: 1000/min stone with Mk.III allowed -> one Mk.III lane; Mk.II cap -> 2 parallel Mk.II lanes; Mk.III records export", MicroLanesMk3);
+        Case("micro lanes: dropped-step product lane = icon tail on the input edge (S and W); a lane off the edge fails", MicroLanesDroppedTail);
         Console.WriteLine("selftest: " + passed + " passed, " + failed + " failed, " + skipped + " skipped");
         return failed == 0 && skipped == 0 ? 0 : 1;
     }
@@ -133,7 +138,7 @@ public static class SelfTest
         if (cellsError != null) throw new Exception(cellsError);
         try
         {
-            var c = Cells.Load(bpDir);
+            var c = Cells.Load(bpDir, gd);
             if (c.Errors.Count > 0) { cellsError = "prototype errors: " + string.Join("; ", c.Errors.ToArray()); throw new Exception(cellsError); }
             cells = c;
             return c;
@@ -1861,6 +1866,194 @@ public static class SelfTest
         }
         Rect bx = l.Bounds();
         Console.WriteLine("      " + l.All.Count + " buildings, " + bx.Width + "x" + bx.Height + "; " + string.Join("; ", comp.Notes.Where(n => n.Contains("buffer")).ToArray()));
+        return e.Result();
+    }
+
+    // ------------------------------------------------------------------ lanes (PLAN.md decisions 7, 8, 9; engine\Lanes.cs)
+    /// One-step plan: Glass (2 stone -> 1 glass, arc smelter) with the given exact/built machine count and tier caps.
+    static PlanInput GlassInput(double exact, int machines, int beltCap, int sorterCap, bool cheapest)
+    {
+        int glass = gd.ResolveItem("Glass");
+        RecipeDef r = gd.DefaultRecipe(glass);
+        if (r == null || r.Inputs.Count != 1 || r.Outputs.Count != 1 || !r.Buildings.Contains(Ids.ArcSmelter)) throw new Exception("glass recipe is not a 1-input arc smelter recipe");
+        double crafts = exact * 60.0 * gd.Speed(Ids.ArcSmelter) / r.TimeSec;
+        var ps = new PlanStep { RecipeId = r.Id, BuildingItemId = Ids.ArcSmelter, MachineCount = exact, Machines = machines };
+        ps.OutputsPerMin[glass] = crafts * r.OutCount(glass);
+        foreach (ItemCount x in r.Inputs) ps.InputsPerMin[x.Item] = crafts * x.Count;
+        var input = new PlanInput { TargetItemId = glass, TargetPerMin = ps.OutputsPerMin[glass] };
+        input.Steps.Add(ps);
+        foreach (ItemCount x in r.Inputs) input.ExternalItems.Add(x.Item);
+        input.Options.BeltItemMax = beltCap; input.Options.SorterItemMax = sorterCap; input.Options.CheapestTiers = cheapest;
+        input.Options.Buffer = false;
+        return input;
+    }
+
+    /// Belts of the chain starting at a belt (following Output links).
+    static List<Bld> LaneFrom(Bld start)
+    {
+        var lane = new List<Bld>();
+        for (Bld b = start; b != null && b.Kind == Kind.Belt && !lane.Contains(b); b = b.Output) lane.Add(b);
+        return lane;
+    }
+
+    static int PickupsOn(Layout l, Bld start)
+    {
+        var lane = new HashSet<Bld>(LaneFrom(start));
+        return l.All.Count(s => s.Kind == Kind.Sorter && s.Input != null && lane.Contains(s.Input));
+    }
+
+    static void ExportCheck(EngineResult res, List<BpBuilding> recs, Errs e, string what)
+    {
+        ExportResult xr = new GameEmitter(gd, GetCells()).Serialize(recs, res.Header, res.Layout);
+        var check = new ValidationReport();
+        GameEmitter.CheckExport(xr, res.Layout, check);
+        foreach (string m in xr.Errors.Concat(check.Errors)) e.L.Add(what + " export: " + m);
+    }
+
+    static string MicroLanesHelpers()
+    {
+        var e = new Errs();
+        e.Check(gd.BeltRate(Ids.BeltMk1) == 360 && gd.BeltRate(Ids.BeltMk2) == 720 && gd.BeltRate(Ids.BeltMk3) == 1800, "belt rates " + gd.BeltRate(Ids.BeltMk1) + "/" + gd.BeltRate(Ids.BeltMk2) + "/" + gd.BeltRate(Ids.BeltMk3));
+        e.Check(Near(gd.SorterRate(Ids.SorterMk1, 1), 90, 1e-6) && Near(gd.SorterRate(Ids.SorterMk2, 2), 90, 1e-6) && Near(gd.SorterRate(Ids.SorterMk3, 1), 360, 1e-6) && Near(gd.SorterRate(Ids.SorterMk3, 2), 180, 1e-6),
+            "sorter rates Mk.I L1 " + Fmt(gd.SorterRate(Ids.SorterMk1, 1)) + ", Mk.III L1 " + Fmt(gd.SorterRate(Ids.SorterMk3, 1)));
+        e.Check(Lanes.BeltFor(gd, 300, Ids.BeltMk3, null) == Ids.BeltMk1, "300/min -> " + Lanes.BeltFor(gd, 300, Ids.BeltMk3, null));
+        e.Check(Lanes.BeltFor(gd, 360, Ids.BeltMk3, null) == Ids.BeltMk1, "360/min (exactly Mk.I) -> " + Lanes.BeltFor(gd, 360, Ids.BeltMk3, null));
+        e.Check(Lanes.BeltFor(gd, 500, Ids.BeltMk3, null) == Ids.BeltMk2, "500/min -> " + Lanes.BeltFor(gd, 500, Ids.BeltMk3, null));
+        e.Check(Lanes.BeltFor(gd, 1000, Ids.BeltMk3, null) == Ids.BeltMk3, "1000/min, Mk.III cap -> " + Lanes.BeltFor(gd, 1000, Ids.BeltMk3, null));
+        e.Check(Lanes.BeltFor(gd, 1000, Ids.BeltMk2, null) == Ids.BeltMk2, "1000/min, Mk.II cap -> " + Lanes.BeltFor(gd, 1000, Ids.BeltMk2, null));
+        e.Check(Lanes.BeltFor(gd, 300, Ids.BeltMk3, new HashSet<int> { Ids.BeltMk1 }) == Ids.BeltMk2, "300/min without a Mk.I prototype");
+        e.Check(Lanes.SorterFor(gd, 60, 1, Ids.SorterMk3, null) == Ids.SorterMk1, "sorter 60/min L1 -> " + Lanes.SorterFor(gd, 60, 1, Ids.SorterMk3, null));
+        e.Check(Lanes.SorterFor(gd, 100, 1, Ids.SorterMk3, null) == Ids.SorterMk2, "sorter 100/min L1 -> " + Lanes.SorterFor(gd, 100, 1, Ids.SorterMk3, null));
+        e.Check(Lanes.SorterFor(gd, 200, 1, Ids.SorterMk3, null) == Ids.SorterMk3, "sorter 200/min L1 -> " + Lanes.SorterFor(gd, 200, 1, Ids.SorterMk3, null));
+        e.Check(Lanes.SorterFor(gd, 100, 2, Ids.SorterMk3, null) == Ids.SorterMk3, "sorter 100/min L2 -> " + Lanes.SorterFor(gd, 100, 2, Ids.SorterMk3, null));
+        e.Check(Lanes.SorterFor(gd, 200, 1, Ids.SorterMk2, null) == Ids.SorterMk2, "sorter 200/min L1, Mk.II cap -> " + Lanes.SorterFor(gd, 200, 1, Ids.SorterMk2, null));
+        e.Check(Lanes.MachinesPerLane(720, 60) == 12 && Lanes.MachinesPerLane(1800, 60) == 30 && Lanes.MachinesPerLane(720, 50) == 14 && Lanes.MachinesPerLane(360, 40) == 9,
+            "floor(lane / demand): " + Lanes.MachinesPerLane(720, 60) + " " + Lanes.MachinesPerLane(1800, 60) + " " + Lanes.MachinesPerLane(720, 50) + " " + Lanes.MachinesPerLane(360, 40));
+        var w = new List<string>(); var t = new Tiers();
+        Lanes.ApplyCaps(gd, new LayoutOptions { BeltItemMax = Ids.BeltMk3, SorterItemMax = Lanes.PileSorter }, t, w);
+        e.Check(t.Belt == Ids.BeltMk3 && t.Sorter == Ids.SorterMk3 && w.Count == 1, "caps Mk.III / pile -> " + t.Belt + " / " + t.Sorter + ", warnings: " + string.Join("; ", w.ToArray()));
+        // prototypes: Mk.III belt = Mk.II record with the game's model index, Mk.III sorter = the COL-PAIR-3 template record
+        Cells c = GetCells();
+        BpBuilding b3 = c.Prototypes.ProtoFor(Ids.BeltMk3), s3 = c.Prototypes.ProtoFor(Ids.SorterMk3);
+        e.Check(b3 != null && b3.itemId == Ids.BeltMk3 && b3.modelIndex == gd.Machine(Ids.BeltMk3).ModelIndex, "belt Mk.III prototype: " + (b3 == null ? "missing" : b3.itemId + " model " + b3.modelIndex));
+        e.Check(s3 != null && s3.itemId == Ids.SorterMk3 && s3.modelIndex == gd.Machine(Ids.SorterMk3).ModelIndex, "sorter Mk.III prototype: " + (s3 == null ? "missing" : s3.itemId + " model " + s3.modelIndex));
+        foreach (string m in c.Log.Where(m => m.Contains("mk3"))) Console.WriteLine("      " + m);
+        return e.Result();
+    }
+
+    static string MicroLanesSplit13()
+    {
+        var e = new Errs();
+        // 11.9 machines' worth of stone (714/min) fits one Mk.II lane by rate, but 13 built machines at full speed draw
+        // 780/min: machines per lane = floor(720 / 60) = 12 -> 2 parallel lanes
+        PlanInput input = GlassInput(11.9, 13, Ids.BeltMk2, Ids.SorterMk2, false);
+        int stone = input.ExternalItems[0];
+        EngineResult res = FlatEngine.Generate(Source(), input, null, null);
+        foreach (string m in res.Errors) e.L.Add("engine: " + m);
+        if (!res.Ok) return e.Result();
+        Layout l = res.Layout;
+        e.Check(l.Count(Kind.Machine, Ids.ArcSmelter) == 13, l.Count(Kind.Machine, Ids.ArcSmelter) + " smelters");
+        var ins = l.Ports.Where(p => p.Kind == PortKind.In && p.Item == stone).OrderBy(p => p.X).ToList();
+        e.Check(ins.Count == 2, ins.Count + " stone lanes, expected 2");
+        var per = ins.Select(p => PickupsOn(l, p.Belt)).OrderByDescending(x => x).ToList();
+        e.Check(per.Count == 2 && per[0] == 7 && per[1] == 6, "machines per lane " + string.Join("+", per.Select(x => x.ToString(CultureInfo.InvariantCulture)).ToArray()) + ", expected 7+6");
+        var all = l.Ports.Where(p => p.Kind == PortKind.In).OrderBy(p => p.X).ToList();
+        e.Check(ins.Count == 2 && Math.Abs(all.IndexOf(ins[0]) - all.IndexOf(ins[1])) == 1, "stone lanes are not neighbours on the edge");
+        foreach (Port p in ins)
+        {
+            e.Check(p.Y == 0 && p.Dir == Dir.N, "stone lane at (" + p.X + "," + p.Y + ") not on the S edge");
+            e.Check(p.Belt.Parameters != null && p.Belt.Parameters[0] == stone && !l.All.Any(s => s.Kind == Kind.Sorter && s.Input == p.Belt), "stone lane at x " + p.X + " has no icon tail");
+        }
+        Console.WriteLine("      " + res.Buildings.Count + " records, " + res.AreaWidth + "x" + res.AreaHeight + ", stone lanes at x " + string.Join(",", ins.Select(p => p.X.ToString(CultureInfo.InvariantCulture)).ToArray()));
+        return e.Result();
+    }
+
+    static string MicroLanesMk3()
+    {
+        var e = new Errs();
+        // Mk.III allowed: 17 smelters (1000/min stone) on one Mk.III lane (floor(1800 / 60) = 30 per lane)
+        PlanInput a = GlassInput(1000.0 / 60.0, 17, Ids.BeltMk3, Ids.SorterMk3, true);
+        int stone = a.ExternalItems[0];
+        EngineResult ra = FlatEngine.Generate(Source(), a, null, null);
+        foreach (string m in ra.Errors) e.L.Add("Mk.III cap: " + m);
+        e.Check(!ra.Warnings.Any(w => w.Contains("prototype")), "Mk.III cap clamped: " + string.Join("; ", ra.Warnings.ToArray()));
+        if (ra.Ok)
+        {
+            Layout l = ra.Layout;
+            var ins = l.Ports.Where(p => p.Kind == PortKind.In && p.Item == stone).ToList();
+            e.Check(ins.Count == 1, ins.Count + " stone lanes with Mk.III allowed, expected 1");
+            if (ins.Count == 1)
+            {
+                var lane = LaneFrom(ins[0].Belt);
+                e.Check(lane.All(b => b.ItemId == Ids.BeltMk3), "stone lane tiers " + string.Join(",", lane.Select(b => b.ItemId.ToString(CultureInfo.InvariantCulture)).Distinct().ToArray()));
+            }
+            // cheapest tiers elsewhere: glass 500/min -> Mk.II; sorters 60 and 30/min at L1 -> Mk.I
+            Port outP = l.Ports.FirstOrDefault(p => p.Kind == PortKind.Out);
+            e.Check(outP != null && outP.Belt.ItemId == Ids.BeltMk2, "product lane belt " + (outP != null ? outP.Belt.ItemId : 0) + ", expected Mk.II");
+            var sorterTiers = l.All.Where(b => b.Kind == Kind.Sorter).Select(s => s.ItemId).Distinct().ToList();
+            e.Check(sorterTiers.Count == 1 && sorterTiers[0] == Ids.SorterMk1, "sorter tiers " + string.Join(",", sorterTiers.Select(x => x.ToString(CultureInfo.InvariantCulture)).ToArray()));
+            ExportCheck(ra, ra.Buildings, e, "Mk.III belt");
+            // Mk.III sorter records: every sorter raised to Mk.III (within the cap) still emits and re-imports
+            foreach (Bld s in l.All.Where(b => b.Kind == Kind.Sorter)) s.ItemId = Ids.SorterMk3;
+            var errs = new List<string>();
+            List<BpBuilding> recs = new Emitter(gd, Source().Cells).Records(l, errs);
+            foreach (string m in errs) e.L.Add("Mk.III sorter records: " + m);
+            if (recs != null)
+            {
+                e.Check(recs.Any(r => r.itemId == Ids.SorterMk3 && r.modelIndex == gd.Machine(Ids.SorterMk3).ModelIndex) && recs.Any(r => r.itemId == Ids.BeltMk3 && r.modelIndex == gd.Machine(Ids.BeltMk3).ModelIndex), "Mk.III records/model indices missing");
+                ExportCheck(ra, recs, e, "Mk.III sorter");
+            }
+            Console.WriteLine("      Mk.III cap: " + ra.Buildings.Count + " records, " + ra.AreaWidth + "x" + ra.AreaHeight + "; " + string.Join("; ", ra.Notes.Where(n => n.StartsWith("tiers")).ToArray()));
+        }
+        // Mk.II cap: 2 parallel Mk.II lanes, nothing above Mk.II
+        PlanInput b2 = GlassInput(1000.0 / 60.0, 17, Ids.BeltMk2, Ids.SorterMk2, true);
+        EngineResult rb = FlatEngine.Generate(Source(), b2, null, null);
+        foreach (string m in rb.Errors) e.L.Add("Mk.II cap: " + m);
+        if (rb.Ok)
+        {
+            var ins = rb.Layout.Ports.Where(p => p.Kind == PortKind.In && p.Item == stone).OrderBy(p => p.X).ToList();
+            e.Check(ins.Count == 2, ins.Count + " stone lanes with a Mk.II cap, expected 2");
+            e.Check(!rb.Layout.All.Any(x => x.ItemId == Ids.BeltMk3 || x.ItemId == Ids.SorterMk3), "Mk.III used under a Mk.II cap");
+            var all = rb.Layout.Ports.Where(p => p.Kind == PortKind.In).OrderBy(p => p.X).ToList();
+            e.Check(ins.Count == 2 && Math.Abs(all.IndexOf(ins[0]) - all.IndexOf(ins[1])) == 1, "stone lanes are not neighbours");
+            ExportCheck(rb, rb.Buildings, e, "Mk.II cap");
+            Console.WriteLine("      Mk.II cap: " + rb.Buildings.Count + " records, " + rb.AreaWidth + "x" + rb.AreaHeight + ", " + ins.Count + " stone lanes; " + string.Join("; ", rb.Notes.Where(n => n.StartsWith("tiers")).ToArray()));
+        }
+        return e.Result();
+    }
+
+    static string MicroLanesDroppedTail()
+    {
+        var e = new Errs();
+        foreach (Dir edge in new[] { Dir.S, Dir.W })
+        {
+            BlockSpec spec = GearSpec();
+            PlanInput input = PlanMapper.FromPlan(new Solver(gd, spec).Solve(), spec);
+            input.Steps.First(s => s.OutputsPerMin.ContainsKey(Ids.IronIngot)).BuildingItemId = Ids.ChemicalPlant;   // dropped
+            input.Options.InEdge = edge; input.Options.OutEdge = Dirs.Opposite(edge);
+            EngineResult res = FlatEngine.Generate(Source(), input, null, null);
+            foreach (string m in res.Errors) e.L.Add(edge + ": engine: " + m);
+            if (!res.Ok) continue;
+            Layout l = res.Layout;
+            Port p = l.Ports.FirstOrDefault(x => x.Kind == PortKind.In && x.Item == Ids.IronIngot);
+            if (p == null) { e.L.Add(edge + ": no iron ingot input lane"); continue; }
+            Rect box = Rect.Empty;
+            foreach (Bld b in l.All) if (b.Kind != Kind.Sorter && b.Kind != Kind.Tesla) box = box.Union(l.Footprints.TileRect(b));
+            bool onEdge = edge == Dir.S ? p.Y == box.Y0 : p.X == box.X0;
+            e.Check(onEdge && p.Dir == Dirs.Opposite(edge), edge + ": iron ingot lane starts at (" + p.X + "," + p.Y + ") flowing " + p.Dir + ", block " + box.X0 + ".." + box.X1 + " x " + box.Y0 + ".." + box.Y1);
+            e.Check(p.Belt.Parameters != null && p.Belt.Parameters.Length == 2 && p.Belt.Parameters[0] == Ids.IronIngot, edge + ": no icon [1101,0] on the lane's first belt");
+            e.Check(p.Belt.Output != null && !l.All.Any(s => s.Kind == Kind.Sorter && s.Input == p.Belt), edge + ": the icon belt is not a tail (pickup tile or dead end)");
+            var edgeErr = Lanes.InputEdgeErrors(l, new BlockSpec { InEdge = edge });
+            e.Check(edgeErr.Count == 0, edge + ": " + string.Join("; ", edgeErr.ToArray()));
+            Console.WriteLine("      " + edge + ": iron ingot lane at (" + p.X + "," + p.Y + "), " + res.AreaWidth + "x" + res.AreaHeight);
+            if (edge != Dir.S) continue;
+            // negative: the port moved one belt into the block (off the edge) -> "input edge" failure
+            Bld second = p.Belt.Output;
+            second.Parameters = p.Belt.Parameters; p.Belt.Parameters = null;
+            p.Belt = second; p.X = second.TileX; p.Y = second.TileY;
+            ValidationReport rep = new Validator(gd, new BlockSpec { Item = 1201, Rate = 120, InEdge = Dir.S }).Validate(l, res.Plan);
+            e.Check(rep.Errors.Any(m => m.Contains("input edge")), "lane off the edge accepted: " + (rep.Ok ? "validator ok" : rep.Errors[0]));
+        }
         return e.Result();
     }
 }

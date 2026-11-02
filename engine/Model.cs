@@ -399,7 +399,8 @@ public class Layout
 }
 
 // ------------------------------------------------------------------ spec and tiers
-/// Building tiers. Belt and sorter are capped at Mk.II by the user's rule (no Mk.III).
+/// Building tiers. Belt and sorter are the caps (Mk.I-III, PLAN.md decision 8): the composer builds at these tiers,
+/// BlockSpec.CheapestTiers then lowers every lane / sorter to the cheapest tier that carries its flow.
 public class Tiers
 {
     public int Smelter = Ids.ArcSmelter;
@@ -423,10 +424,12 @@ public class Tiers
         return 0;
     }
 
+    /// Belt/sorter must be a tier the engine can emit (Mk.I-III; PLAN.md decision 8 lifted the old Mk.II-max rule:
+    /// the tiers are caps now, Lanes.AssignTiers picks the cheapest tier inside them).
     public void CheckUserRules()
     {
-        if (Belt == Ids.BeltMk3) throw new ArgumentException("belt Mk.III is not allowed (user rule: Mk.II max)");
-        if (Sorter == Ids.SorterMk3) throw new ArgumentException("sorter Mk.III is not allowed (user rule: Mk.II max)");
+        if (!Ids.IsBelt(Belt)) throw new ArgumentException("belt tier " + Belt + " is not Mk.I/II/III");
+        if (!Ids.IsSorter(Sorter)) throw new ArgumentException("sorter tier " + Sorter + " is not Mk.I/II/III");
     }
 }
 
@@ -455,6 +458,12 @@ public class BlockSpec
     /// Buffer depot at the product end of the block (user rule 2026-10-31, cell DEPOT_BUFFER); --no-buffer disables it.
     /// Kit mode: only on the final product module.
     public bool Buffer = true;
+    // ---- lanes (engine\Lanes.cs, PLAN.md decision 8)
+    /// Cheapest belt/sorter tier per lane / sorter inside the caps (Tiers.Belt / Tiers.Sorter). Off = every belt and
+    /// sorter at the cap tier (CLI default, keeps the coil-360-v3 regression); the addon path (LayoutOptions) sets it.
+    public bool CheapestTiers;
+    /// Belt/sorter tiers without a prototype record (FlatEngine fills it from PrototypeCells): never chosen.
+    public HashSet<int> MissingTiers = new HashSet<int>();
 }
 
 // ------------------------------------------------------------------ plan (Solver output)

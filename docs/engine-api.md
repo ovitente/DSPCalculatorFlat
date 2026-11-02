@@ -42,7 +42,8 @@ public class PlanStep {
 }
 public class LayoutOptions {
   public int BeltItemMax = 2002;      // 2001/2002/2003 Mk.I/II/III cap
-  public int SorterItemMax = 2012;    // 2011/2012/2013/2014 cap
+  public int SorterItemMax = 2012;    // 2011/2012/2013/2014 cap (2014 pile -> Mk.III, warning)
+  public bool CheapestTiers = true;   // cheapest tier per lane / sorter inside the caps (decision 8)
   public int LabStackMax = 15;        // vertical construction tech cap
   public int TimeBudgetMs = 60000;
   public int ProliferatorItemId = 0;  // 1141/1142/1143; 0 = none
@@ -112,7 +113,7 @@ fails if a core file uses `System.IO`, `Console.`, `Environment.`, `CurrentCultu
   CLI host (`DspFlat.Host.GameDataFiles.Load`).
 - **`PrototypeCells`** (in `Api.cs`): `ByName` (string -> `BpBuilding`), `SetDefault(itemId, name)`, `ProtoFor(itemId)`,
   `Proto(name)`, `Errors`. Named cells the Emitter asks for: `depot-mk1`, `depot-in`, `depot-out1`, `depot-out2`,
-  `splitter-m39`, `splitter-m40`; generic per item: arc/plane smelter, assembler Mk.I-III, belt Mk.I/II, sorter Mk.I/II,
+  `splitter-m39`, `splitter-m40`; generic per item: arc/plane smelter, assembler Mk.I-III, belt Mk.I/II/III, sorter Mk.I/II/III,
   tesla, splitter, depot Mk.I. CLI: `DspFlat.Host.Cells` loads them from the user's templates + `refs\`.
 - **`PlanStep.ExternalInputs`** (extension): inputs this step takes from a lane although another step makes them
   (CLI `--raw "Item@Consumer"`). Empty for the addon.
@@ -120,9 +121,27 @@ fails if a core file uses `System.IO`, `Console.`, `Environment.`, `CurrentCultu
   `MaxRow`, `ShortDesc`/`Desc` overrides. `TimeBudgetMs <= 0` = no hard limit (the CLI uses this; the composer keeps
   its per-mode-set budget `EngineTuning.ComposeBudgetMs`, 240 s). `TimeBudgetMs > 0` = hard limit for the whole run:
   the composer stops between attempts and keeps the best valid attempt, else Generate fails with "time budget reached".
-- **Tier caps** (phase 2): belt Mk.III cap -> Mk.II, sorter Mk.III/pile cap -> Mk.II, with a warning (no geometry /
-  prototypes for them yet; tier choice inside the cap is phase 4). `LabStackMax` and `ProliferatorItemId` are accepted
-  but unused (warning when a proliferator is set or a step has `IncLevel > 0`: no spray coaters yet).
+- **Tier caps** (phase 4, `engine/Lanes.cs`): `BeltItemMax` / `SorterItemMax` are caps, Mk.I-III each (pile sorter
+  -> Mk.III with a warning). The composer builds and splits lanes at the cap tiers; with `CheapestTiers` (default true)
+  every belt run (straight/corner links; side-joins and splitters start new runs) then gets the cheapest belt tier that
+  carries its highest load and every machine sorter the cheapest tier that moves max(planned, full-speed) items at its
+  length; the result is validated again, else the cap tiers stay (note "tiers: ..."). Buffer-depot sorters stay Mk.II
+  (named prototypes). A tier without a prototype record (`PrototypeCells.ProtoFor` null) is never used: a cap above it
+  drops to the next lower tier with a warning. CLI prototypes: Sorter Mk.III = the user's COL-PAIR-3 template record
+  (in3 #3, model 43); Belt Mk.III = the Mk.II record with item 2003 / model 37 from game-data.json, derived only after
+  checking that the Mk.I and Mk.II records differ only by item id and model index. The Validator's rule 4 is now
+  "no belt / sorter above the caps". `BlockSpec.CheapestTiers` defaults to false (CLI: `--cheapest-tiers`, tiers via
+  `--belt/--sorter mk1|mk2|mk3`), so the coil-360-v3 regression keeps its Mk.II tiers.
+- **Lane split** (decision 9): machines per lane = floor(lane rate / one machine's full-speed per-minute demand),
+  minimum over the row's inputs and its output (`Lanes.MachinesPerLane`); a step whose machines need more lanes becomes
+  parallel rows with lanes of their own, grouped by material on the input edge. Rows on block input lanes are never
+  split by the composer's height cap (mode 1), only by lane capacity. Sorters: MachineRow adds a second sorter when one
+  sorter of the cap tier cannot deliver a machine's demand; the tier choice above never picks a sorter that is too slow.
+- **Input edge** (decision 7): every block input lane (raw, marked external, dropped-step products) starts with its icon
+  tail on the outermost row of `InEdge` (composer extends lanes that start higher; Validator "input edge" fails lanes
+  that do not).
+- `LabStackMax` and `ProliferatorItemId` are accepted but unused (warning when a proliferator is set or a step has
+  `IncLevel > 0`: no spray coaters yet).
 - **Proliferator rates**: with `IncLevel > 0` the machine speed is derived from the plan's numbers
   (`output * time / (outCount * 60 * MachineCount)`), so the layout carries exactly the plan's rates.
 - **`EngineResult`** extensions for hosts: `GameVersion`, `Header` (`BpHeader`), `Notes` (composer notes), `Plan` (the

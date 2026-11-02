@@ -70,8 +70,7 @@ public static class Modules
             throw new ArgumentException("row " + spec.Name + ": InputRates length differs from InputItems");
         if (spec.InputItems.Distinct().Count() != spec.InputItems.Length || spec.InputItems.Contains(spec.OutputItem))
             throw new ArgumentException("row " + spec.Name + ": duplicate item among inputs/output");
-        if (spec.BeltItem == Ids.BeltMk3 || spec.SorterItem == Ids.SorterMk3)
-            throw new ArgumentException("row " + spec.Name + ": Mk.III belt/sorter not allowed (user rule 4)");
+        // lanes hook (PLAN.md decision 8): Mk.III belts/sorters are allowed, the tiers are caps (engine\Lanes.cs)
         spec.Problems.Clear(); spec.Notes.Clear();
 
         int n = spec.InputItems.Length;
@@ -373,7 +372,6 @@ public static class Modules
     public static Fragment BeltRun(string chain, int beltItem, int carries, IList<int[]> tiles, Bld mergeInto)
     {
         if (tiles == null || tiles.Count == 0) throw new ArgumentException("BeltRun " + chain + ": no tiles");
-        if (beltItem == Ids.BeltMk3) throw new ArgumentException("BeltRun " + chain + ": Mk.III belt not allowed (user rule 4)");
         if (tiles.Count == 1 && mergeInto == null) throw new ArgumentException("BeltRun " + chain + ": a single tile needs mergeInto to define its direction");
         var seen = new HashSet<long>();
         for (int i = 0; i < tiles.Count; i++)
@@ -521,7 +519,6 @@ public static class Modules
     {
         if (model == 38 && outs.All(o => !o.Value)) return Splitter(x, y, inFrom, outs.Select(o => o.Key).ToArray(), beltItem, carries, priority);
         if (SplitterSlot(model, inFrom, false) < 0) throw new ArgumentException("SplitterV: model " + model + " has no ground port on side " + inFrom);
-        if (beltItem == Ids.BeltMk3) throw new ArgumentException("Splitter: Mk.III belt not allowed (user rule 4)");
         var f = new Fragment("splitter@" + x + "," + y);
         Bld sp = f.Add(Bld.Splitter(x, y, priority));
         sp.Carries = carries; sp.Role = "splitter m" + model; sp.ModelIndex = model;
@@ -645,7 +642,6 @@ public static class Modules
     {
         if (outs == null || outs.Length < 1 || outs.Length > 3) throw new ArgumentException("Splitter: 1..3 outputs required");
         if (outs.Distinct().Count() != outs.Length || outs.Contains(inFrom)) throw new ArgumentException("Splitter: output sides must be distinct and differ from the input side");
-        if (beltItem == Ids.BeltMk3) throw new ArgumentException("Splitter: Mk.III belt not allowed (user rule 4)");
         var f = new Fragment("splitter@" + x + "," + y);
         Bld sp = f.Add(Bld.Splitter(x, y, priority));
         sp.Carries = carries; sp.Role = "splitter";
