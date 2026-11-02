@@ -11,7 +11,7 @@ using System.Linq;
 namespace DspFlat.Engine
 {
 
-public class Validator
+public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCell.cs
 {
     readonly GameData gd;
     readonly BlockSpec spec;
@@ -58,7 +58,7 @@ public class Validator
     static string F(double v) { return v.ToString("0.###", CultureInfo.InvariantCulture); }
 
     // ======================================================================== Validate implementation
-    sealed class Run
+    sealed partial class Run   // FINALCELL HOOK: partial, see engine/FinalCell.cs
     {
         const double Eps = 1e-6;
         readonly GameData gd;
@@ -730,6 +730,7 @@ public class Validator
                     StoreSorter(s, i.Kind == Kind.Belt, usedSlots, roles, at);
                     continue;
                 }
+                if (CellSorter(s, i, o, usedSlots, at)) continue;   // FINALCELL HOOK: machine->machine (rule 4), machine->depot (rule 7)
                 if (!toMachine && !fromMachine) { R.Fail("sorter must link a belt and a machine or depot (" + i.Kind + " -> " + o.Kind + ")" + at); continue; }
                 Bld mach = toMachine ? o : i, belt = toMachine ? i : o;
                 Get(toMachine ? inSorters : outSorters, mach).Add(s);
@@ -844,6 +845,7 @@ public class Validator
                 {
                     int dist; Dir side;
                     if (s.SorterLength != 1 || !SideOf(m, s.Input, out side, out dist)) continue;
+                    if (CellRule11(m, s)) continue;   // FINALCELL HOOK: rule 11, two lane dead ends on one face
                     if (!sideLanes.ContainsKey(side)) sideLanes[side] = new HashSet<string>();
                     sideLanes[side].Add(Lane(s.Input));
                 }
@@ -986,6 +988,7 @@ public class Validator
         // ---------------------------------------------------------------- 4. flow semantics (items per lane)
         void Items()
         {
+            CellIndex();   // FINALCELL HOOK
             if (!beltGraphOk) { R.Fail("flow checks skipped: belt graph is broken"); return; }
             foreach (Bld n in topo)
             {
@@ -995,6 +998,7 @@ public class Validator
                 if (n.Input != null && n.Input.Kind == Kind.Splitter && items.ContainsKey(n.Input)) set.UnionWith(items[n.Input]);
                 Port ip = InPortAt(n); if (ip != null) set.Add(ip.Item);
                 foreach (Bld s in Peek(dropsAt, n)) set.UnionWith(DropItems(s));
+                CellItems(n, set);   // FINALCELL HOOK: inline depot drops the final product
                 items[n] = set;
             }
             // machine inputs: every recipe input on some input sorter's lane; every sorter on a lane with a recipe input
@@ -1080,6 +1084,7 @@ public class Validator
                     var ss = outs.Where(s => s.FilterId == 0 || s.FilterId == o.Item).ToList();
                     foreach (Bld s in ss)
                     {
+                        if (CellIsM2M(s)) continue;   // FINALCELL HOOK: rated as the consumer's input sorter
                         double r; sorterRate.TryGetValue(s, out r);
                         sorterRate[s] = r + MachineRate(m, o.Item, true) / ss.Count;
                     }
@@ -1141,6 +1146,7 @@ public class Validator
                         add(new Dictionary<int, double> { { o.Item, MachineRate(s.Input, o.Item, true) / share } }, 1);
                     }
                 }
+                CellFlow(n, f);   // FINALCELL HOOK
                 double total = f.Values.Sum();
                 if (n.Kind == Kind.Belt) Loads[n] = total;   // lanes hook
                 double cap = gd != null ? gd.BeltRate(n.ItemId) : 0;
@@ -1230,6 +1236,7 @@ public class Validator
                 bool fed = false;
                 for (Bld n = b; n != null && n.Kind == Kind.Belt; n = n.Output)
                 {
+                    if (CellFed(n)) { fed = true; break; }   // FINALCELL HOOK
                     if (Peek(dropsAt, n).Count > 0) { fed = true; break; }
                     if (n.Output != null && n.OutputToSlot > 1) break;
                     if (n.Output != null && !inLayout.Contains(n.Output)) break;

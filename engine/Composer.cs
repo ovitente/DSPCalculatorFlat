@@ -18,7 +18,7 @@ using System.Text;
 namespace DspFlat.Engine
 {
 
-public class Composer
+public partial class Composer   // FINALCELL HOOK: partial, see engine/FinalCell.cs
 {
     readonly GameData gd;
     readonly BlockSpec spec;
@@ -428,7 +428,7 @@ public class Composer
 
     class Goal { public Dir? NextDir; public Dir? Entry; public Bld Target; public bool SideJoin; public bool NoBridgeLanding; }
 
-    class Attempt
+    partial class Attempt   // FINALCELL HOOK: partial, see engine/FinalCell.cs
     {
         readonly GameData gd; readonly BlockSpec spec; readonly ProductionPlan plan;
         readonly int rowGap, lineGap;
@@ -491,10 +491,12 @@ public class Composer
             if (Fatal) return Finish();
             MakeEdges();
             if (Fatal) return Finish();
+            FinalCellAbsorb();   // FINALCELL HOOK: rule 4 machine absorbed into the final row
             Place();
             if (Fatal) return Finish();
             foreach (var r in rows) if (r.Frag != null) foreach (var b in r.Frag.Blds) AddBld(work, b);
             BlockTiles();
+            FinalCellBlock();   // FINALCELL HOOK
             Route();
             return Finish();
         }
@@ -739,6 +741,7 @@ public class Composer
         // ---------------------------------------------------------------- placement
         Fragment Build(RowInfo r, bool mirror)
         {
+            if (IsFinalCellRow(r)) return FinalCellBuild(r, mirror);   // FINALCELL HOOK
             var rs = new RowSpec
             {
                 Name = r.Name, MachineItem = r.Step.MachineItem, RecipeId = r.Step.Recipe.Id, Count = r.Count, Pitch = 0,
@@ -836,6 +839,7 @@ public class Composer
                 RowInfo bestP = null; LineInfo bestL = null;
                 bool rowHasRaw = r.InItems.Any(it => r.Step.IsExternal(plan, it)) || (noStackMulti && r.InItems.Length >= 3);   // raw lanes must start on the input edge
                 if (Coaters.Coated(r.Step) && spec.ProliferatorItem != 0) rowHasRaw = true;   // COATERS HOOK: never stacked (feed port below the row)
+                if (IsFinalCellRow(r)) rowHasRaw = true;   // FINALCELL HOOK: the final cell starts its own line
                 foreach (var e in edges.Where(e => e.To == r && !rowHasRaw))
                 {
                     RowInfo p = e.From;
@@ -1421,6 +1425,7 @@ public class Composer
 
         void RouteProduct(RowInfo r, Port o, int id)
         {
+            if (IsFinalCellRow(r)) { FinalCellProduct(r, o); return; }   // FINALCELL HOOK: inline depot tail is the product end (rule 7)
             Bld ob = PortBelt(o);
             if (ob == null) { errors.Add("composer: product port of " + r.Name + " has no belt"); return; }
             Bld last = ob;
