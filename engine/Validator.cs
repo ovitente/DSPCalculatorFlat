@@ -390,6 +390,7 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                 Dir d = FlowOf(b);
                 int nx = b.TileX + Dirs.Dx(d), ny = b.TileY + Dirs.Dy(d);
                 Bld o = BeltAtTile(nx, ny);
+                if (o != null && CellEndOk(b, o)) continue;   // FINALCELL HOOK: rule 6 E lane end under the N lane corner (useredit3 #278 -> #367)
                 if (o != null && Math.Abs(o.Z - b.Z) < 0.9) R.Fail("chain end " + At(b.X, b.Y) + " points into belt (" + nx + "," + ny + ") without a side-join link");
                 foreach (Bld s in splitters) if (s.TileX == nx && s.TileY == ny) R.Fail("chain end " + At(b.X, b.Y) + " points into a splitter without a link");
             }

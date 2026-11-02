@@ -307,8 +307,18 @@ namespace DspFlat.Engine
             {
                 if (cellRow == null || cellRow.Frag == null) return;
                 Bld T = cellRow.Frag.Blds.FirstOrDefault(b => b.Kind == Kind.Machine && b.RecipeId == cellChoice.Final.Recipe.Id);
-                if (T == null || cellChoice.Dedicated == null) return;
+                if (T == null) return;
                 int q = cellChoice.OutQuarters;
+                // the E lane's dead end (2,1) points at (2,2), the N lane's approach tile (useredit3 #278 under corner #367):
+                // BlockTiles kept it free as "ahead of a lane end"; the N lane must be routed through it
+                if (cellRow.Frag.Blds.Any(b => b.Role == "rule 6 lane N") && cellRow.Frag.Blds.Any(b => b.Role == "rule 6 lane E"))
+                {
+                    int ax = 2, ay = 2;
+                    for (int i = 0; i < q; i++) { int t = ax; ax = ay; ay = -t; }
+                    long k = K((int)Math.Round(T.X) + ax, (int)Math.Round(T.Y) + ay);
+                    if (aheadOfEnd.Remove(k)) blocked.Remove(k);
+                }
+                if (cellChoice.Dedicated == null) return;
                 for (int x = -1; x <= 1; x++)
                     for (int y = -3; y <= -1; y++)
                     {
@@ -409,6 +419,17 @@ namespace DspFlat.Engine
                     if (dx * Dirs.Dx(flow) + dy * Dirs.Dy(flow) > 0) return true;   // the two lanes run toward each other
                 }
                 return false;
+            }
+
+            /// useredit3 turret: the E lane ends at (5,13) (#278, flows N) right under the N lane corner (5,14) (#367) that
+            /// feeds the same machine (#428 from (4,14)); the game keeps them unlinked. A dead end that feeds a machine may
+            /// point into a belt whose lane (that belt or the next) also feeds that machine.
+            bool CellEndOk(Bld b, Bld o)
+            {
+                Bld s = sorters.FirstOrDefault(x => x.Input == b && x.Output != null && x.Output.Kind == Kind.Machine);
+                if (s == null) return false;
+                Bld n2 = o.Output != null && o.Output.Kind == Kind.Belt ? o.Output : null;
+                return sorters.Any(x => (x.Input == o || (n2 != null && x.Input == n2)) && x.Output == s.Output);
             }
 
             bool CellIsM2M(Bld s) { return cellM2M.Contains(s); }
