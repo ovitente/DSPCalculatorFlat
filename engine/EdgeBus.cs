@@ -78,13 +78,13 @@ namespace DspFlat.Engine
         {
             var res = new HashSet<Bld>();
             var preds = Preds(belts);
-            var raisedOn = new Dictionary<long, int>();
+            var raisedOn = new Dictionary<long, HashSet<int>>();   // distinct raised levels per tile (a stack needs two levels; two belts on one level stay a two-level-crossing error)
             var ground = new Dictionary<long, Bld>();
             foreach (Bld b in belts)
             {
                 if (!OnGrid(b)) continue;
                 long k = K(b.TileX, b.TileY);
-                if (b.IsRaised) { int n; raisedOn.TryGetValue(k, out n); raisedOn[k] = n + 1; }
+                if (b.IsRaised) { HashSet<int> zs; if (!raisedOn.TryGetValue(k, out zs)) raisedOn[k] = zs = new HashSet<int>(); zs.Add((int)Math.Round(b.Z * 2)); }
                 else ground[k] = b;
             }
             foreach (Bld b in belts)
@@ -101,7 +101,7 @@ namespace DspFlat.Engine
                 {
                     long k = K(n.TileX, n.TileY);
                     Bld g;
-                    if (n.Z > 0.75 || raisedOn[k] > 1 || (ground.TryGetValue(k, out g) && IsCorner(g)) || (n.Role != null && n.Role.StartsWith(Role))) { bus = true; break; }
+                    if (n.Z > 0.75 || raisedOn[k].Count > 1 || (ground.TryGetValue(k, out g) && IsCorner(g)) || (n.Role != null && n.Role.StartsWith(Role))) { bus = true; break; }
                 }
                 if (bus) foreach (Bld n in run) res.Add(n);
             }
