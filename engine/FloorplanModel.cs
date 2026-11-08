@@ -54,7 +54,7 @@ public class FpConnection
     public Port Source;                                // From's out port (null for comb)
     public Port Target;                                // To's in port
     public FpRoute Route;
-    /// Band: the horizontal lane row (y) assigned to this item; Comb: the tail x on the input edge. -1 = not assigned yet.
+    /// Band: lane index above FpPlan.BandY0 (row y = BandY0 + Slot); Comb: the tail x on the input edge. -1 = not assigned yet.
     public int Slot = -1;
     /// Several consumers of one producer: the connections share Source; the band puts one splitter per fork (2-way,
     /// rule 8) or feeds the next consumer from the lane tail (rule 8 / 12). Group = index of the shared source.
@@ -63,6 +63,19 @@ public class FpConnection
     /// the port's own direction for a final cell lane. Rows are built with Flow N until RowSpec.LaneFlows exists; the
     /// assembly rebuilds the rows with these flows (docs\floorplan-design.md item 5).
     public Dir TargetFlow = Dir.N;
+    // ---- filled by Bands.Lay (additive, read by the assembly step) ----
+    /// Chain name of the laid belts ("band:<item>#k", "comb:<item>#k", "straight:<item>#k", "merge:<item>#k").
+    public string Chain;
+    /// Belts laid for this connection (ground + raised nodes, in flow order; splitter cell belts excluded).
+    public readonly List<Bld> Belts = new List<Bld>();
+    /// Raised (z 0.5) nodes among Belts = one-tile bridges over crossed ground lanes.
+    public int Bridges;
+    /// Comb: the block input port created on the tail tile (icon [item,0]); also appended to Layout.Ports.
+    public Port Tail;
+    /// Fork: the 2-way splitter laid for this group (set on the group's connections that pass through it).
+    public Bld Splitter;
+    /// True when Bands.Lay laid the belts of this connection.
+    public bool Laid;
     public override string ToString() { return Route + " " + Item + " " + Rate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "/min " + (From == null ? "comb" : From.Name) + " -> " + To.Name; }
 }
 

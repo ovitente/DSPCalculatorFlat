@@ -23,6 +23,7 @@ public static partial class SelfTest
     static partial void RunDoubleCases(); // PATTERNS HOOK: double rows (engine\DoubleRows.cs), tests\SelfTestDouble.cs (SelfTest.exe only)
     static partial void RunLaneFlowCases(); // FLOORPLAN HOOK: per-lane flows (RowSpec.InputFlows / OutputFlow), tests\SelfTestLaneFlow.cs (SelfTest.exe only)
     static partial void RunFloorplanCases(); // FLOORPLAN HOOK: pattern-driven floorplan (engine\Floorplan.cs), tests\SelfTestFloorplan.cs (SelfTest.exe only)
+    static partial void RunBandCases();   // FLOORPLAN HOOK: band / comb belts (engine\Bands.cs), tests\SelfTestBands.cs (SelfTest.exe only)
     static string root, bpDir;
     static GameData gd;
     static Cells cells;
@@ -119,6 +120,7 @@ public static partial class SelfTest
         Case("micro coaters: 2-input coil row with tails -> drawn shape (coaters at tail y + 5, ramp column next to the bundle z 0/0.5/1 + corner, feed z 1 behind, dead end), valid + export", MicroCoatersDrawnRow);   // COATERS HOOK
         RunDrawnCases(); // PATTERNS HOOK: drawn pattern files (SelfTestDrawn.cs)
         RunFloorplanCases(); // FLOORPLAN HOOK: engine\Floorplan.cs (SelfTestFloorplan.cs)
+        RunBandCases();  // FLOORPLAN HOOK: engine\Bands.cs (SelfTestBands.cs)
         Console.WriteLine("selftest: " + passed + " passed, " + failed + " failed, " + skipped + " skipped");
         return failed == 0 && skipped == 0 ? 0 : 1;
     }
