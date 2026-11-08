@@ -146,6 +146,17 @@ fails if a core file uses `System.IO`, `Console.`, `Environment.`, `CurrentCultu
   z 1 feed belt one tile behind every coater (game geometry: user's `7-logi\L1.txt`, game 0.10.35; see the file header).
   Proliferator demand = coated lane flow / sprays per item (ItemProto.HpMax 12/24/60; `GameData.SprayCounts`).
   Prototype record: `7-logi\L1.txt` #36 (CLI host, optional). Hook points in shared files are marked `COATERS HOOK`.
+  **Shape since 2026-11-08 (feat-fp-coaters)** = the user's drawn coater block `refs\patterns\p-sheet-001.txt` x58..68:
+  all coaters of a row in ONE line c = lowest first pickup - 2; coated lanes with a tail start at c - `Coaters.CoaterRowOffset`
+  (5: sheet tails y0, coaters y5) so the tails sit on the input edge; the proliferator lane's ramp column is the tile
+  NEXT TO the bundle of coated lanes (`Coaters.RampColumn`: -x side of the lowest coated lane first - sheet x60 west of
+  x61..65 - then +x side of the highest when another lane, e.g. the output lane of a 2-input row, takes the -x tile;
+  only when both are lanes it falls back to the pre-2026-11-08 place outside all lanes); profile tail z 0 (icon) ->
+  foot z 0 -> z 0.5 -> z 1 straight -> z 1 corner at c - 1, feed on z 1 one tile behind every coater, dead end over the
+  far coated lane. The old shape (ramp outside side A, no straight z 1 node before the corner, tails at c - 4) is no
+  longer generated but `Coaters.Validate` accepts both (older fixtures). Selftests: `micro coaters` (plain 2-input coil
+  row: ramp on the +x side, `tests\SelfTestCoaters.cs CheckDrawnCoaterShape`), `micro double c` (coil double row: ramp
+  on the -x side as drawn; the engine's lanes stay straight at x58/59/67/68, so the sheet comparison is relative).
 - **Drawn patterns, Validator relaxations** (feat-pat-drawn, 2026-11-08; `tests/SelfTestDrawn.cs`, filter `micro drawn`):
   the user's drawn files `refs\patterns\p08-asm-row-3in.txt`, `p09-asm-row-4in.txt`, `p12-input-edge-comb.txt`,
   `p-sheet-001.txt` are game-proven, so every rule they broke was relaxed to what they show: belt yaw = chord from the
@@ -184,13 +195,12 @@ fails if a core file uses `System.IO`, `Console.`, `Environment.`, `CurrentCultu
   the decision-9 lane expectations (selftests "micro lanes": one lane per 720/min, lanes of one item adjacent on the
   edge) do not allow; with it on, those two cases fail and everything else passes. Known limits: a 2-input double row on two raw items puts its tails as A, B | B, A along the
   edge; the sheet's coil block has exactly that order (x61 magnet, x62 copper, x64 copper, x65 magnet), so rule 10
-  ("input groups") is a warning since 2026-11-08 (user: the order along the edge is not important); and the coaters are laid as the engine's COATER
-  cell (one coater line 2 below the first pickup across all lanes, ramp column outside side A, feed row across every lane),
-  not as drawn: the sheet bundles the four input lanes at x61..65 below the machines with the coaters at y5 on the bundle,
-  the lanes jog out to x58/59/67/68 at y8/y9, and the proliferator ramp sits inside the bundle (x60) with a 5-tile feed
-  ending after the last coater. To draw it like that, `Coaters.cs` would need lanes as tile paths (corners below the
-  coater line) instead of `lanes[x]` + `laneStart[x]`, a bundle mode for the coater line, and the ramp column next to the
-  bundle instead of outside the outermost lane.
+  ("input groups") is a warning since 2026-11-08 (user: the order along the edge is not important); and the coaters follow
+  the drawn shape relative to the engine's straight lanes (see "Spray coaters" above; feat-fp-coaters): the sheet bundles
+  the four input lanes at x61..65 below the machines with the coaters at y5 on the bundle and the lanes jog out to
+  x58/59/67/68 at y8/y9, while the engine keeps the lanes straight at x58/59/67/68 and puts the ramp column at x57 (one
+  tile on the -x side of the lowest coated lane, as x60 is for the bundle). Bundling the lanes themselves (tile paths with
+  corners below the coater line instead of `lanes[x]` + `laneStart[x]`) is still open.
 - **Unsupported steps** (`StepSupport.WhyNot`): building not in {2302, 2315, 2303, 2304, 2305, 2901, 2310}, or a recipe with more
   than one output, or a step whose product is in `ExternalItems` -> dropped with a warning, its products become input
   lanes. Steps that only fed dropped steps are removed too (warning "removed: nothing left in the block consumes X").

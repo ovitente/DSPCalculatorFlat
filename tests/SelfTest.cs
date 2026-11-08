@@ -113,6 +113,7 @@ public static partial class SelfTest
         // spray coaters (engine\Coaters.cs, COATERS HOOK; cases in tests\SelfTestCoaters.cs)
         Case("micro coaters: 2-input final step incLevel 1 -> 2 coaters + 1 proliferator lane with icon tail, valid + export", MicroCoaters);
         Case("micro coaters: incLevel 0 -> no coaters, no proliferator lane; validator rejects a coater without its feed node", MicroCoatersNone);
+        Case("micro coaters: 2-input coil row with tails -> drawn shape (coaters at tail y + 5, ramp column next to the bundle z 0/0.5/1 + corner, feed z 1 behind, dead end), valid + export", MicroCoatersDrawnRow);   // COATERS HOOK
         RunDrawnCases(); // PATTERNS HOOK: drawn pattern files (SelfTestDrawn.cs)
         Console.WriteLine("selftest: " + passed + " passed, " + failed + " failed, " + skipped + " skipped");
         return failed == 0 && skipped == 0 ? 0 : 1;

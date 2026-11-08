@@ -1,5 +1,7 @@
 // SelfTestCoaters.cs - self tests of the spray coater cell (engine\Coaters.cs): proliferated final step -> one coater per
-// input lane and one external proliferator lane with an icon tail on the input edge; no coaters without proliferator.
+// input lane and one external proliferator lane with an icon tail on the input edge; no coaters without proliferator;
+// the cell has the shape the user drew on refs\patterns\p-sheet-001.txt x58..68 (CheckDrawnCoaterShape, also used by
+// SelfTestDouble.cs MicroDoubleCoilBlock).
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -82,6 +84,144 @@ public static partial class SelfTest
             System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "coil-180-coaters.txt"), xr.Text);
             Console.WriteLine(Composer.Map(res.Layout));
         }
+        return e.Result();
+    }
+
+    /// The drawn coater shape (refs\patterns\p-sheet-001.txt x58..68, engine\Coaters.cs header) on a Flow-N fragment or
+    /// layout: all coaters in one row at (lowest coated tail y) + Coaters.CoaterRowOffset; exactly one feed chain whose
+    /// tail sits level with the coated tails and carries the proliferator icon, in the column right next to the bundle
+    /// of coated lanes (-x side, or +x side when a lane takes the -x tile); profile z 0 / 0 / 0.5 / 1 / 1 straight up
+    /// that column, the corner at the coater row - 1, the feed on z 1 across every coated lane, dead end over the far
+    /// coated lane. Returns the ramp side as text for the case's console line ("-x" / "+x" / "?").
+    static string CheckDrawnCoaterShape(Errs e, IEnumerable<Bld> all, int prolif, string tag)
+    {
+        var blds = all.ToList();
+        var coaters = blds.Where(Coaters.IsCoater).ToList();
+        if (coaters.Count == 0) { e.L.Add(tag + ": no coaters"); return "?"; }
+        var rows = coaters.Select(k => k.TileY).Distinct().ToList();
+        e.Check(rows.Count == 1, tag + ": coaters on " + rows.Count + " rows (y " + string.Join(",", rows.Select(y => y.ToString(CultureInfo.InvariantCulture)).ToArray()) + "), drawn: one row");
+        int c = rows.Min();
+        var pred = new Dictionary<Bld, Bld>();
+        foreach (Bld b in blds) if (b.Kind == Kind.Belt && b.Output != null && b.OutputToSlot <= 1 && !pred.ContainsKey(b.Output)) pred[b.Output] = b;
+        // coated lanes: ground belt under each coater, walked back to the chain start (the tail)
+        var coatedX = new List<int>(); int tailY = int.MaxValue;
+        foreach (Bld k in coaters)
+        {
+            Bld under = blds.FirstOrDefault(b => b.Kind == Kind.Belt && !b.IsRaised && b.TileX == k.TileX && b.TileY == k.TileY);
+            if (under == null) { e.L.Add(tag + ": no lane belt under the coater at (" + k.TileX + "," + k.TileY + ")"); continue; }
+            coatedX.Add(k.TileX);
+            Bld t = under; var seen = new HashSet<Bld>();
+            while (seen.Add(t)) { Bld p; if (!pred.TryGetValue(t, out p) || Coaters.IsFeed(p)) break; t = p; }
+            tailY = Math.Min(tailY, t.TileY);
+        }
+        if (coatedX.Count == 0) return "?";
+        e.Check(c == tailY + Coaters.CoaterRowOffset, tag + ": coater row y " + c + ", lowest coated tail y " + tailY + ", drawn offset " + Coaters.CoaterRowOffset + " (sheet tails y0, coaters y5)");
+        // one feed chain
+        var feeds = blds.Where(Coaters.IsFeed).ToList();
+        var starts = feeds.Where(b => { Bld p; return !pred.TryGetValue(b, out p) || !Coaters.IsFeed(p); }).ToList();
+        e.Check(starts.Count == 1, tag + ": " + starts.Count + " feed chain(s), drawn: 1");
+        if (starts.Count != 1) return "?";
+        var chain = new List<Bld>();
+        for (Bld n = starts[0]; n != null && chain.Count < 200; n = n.Output) chain.Add(n);
+        int xr = chain[0].TileX;
+        int lo = coatedX.Min(), hi = coatedX.Max();
+        string side = xr == lo - 1 ? "-x" : xr == hi + 1 ? "+x" : "?";
+        e.Check(side != "?", tag + ": ramp column x " + xr + " is not next to the coated lanes " + lo + ".." + hi + " (sheet: x60 next to the bundle x61..65)");
+        int far = side == "-x" ? hi : lo;
+        e.Check(chain[0].TileY == tailY && chain[0].Parameters != null && chain[0].Parameters.Length == 2 && chain[0].Parameters[0] == prolif,
+            tag + ": feed tail at (" + chain[0].TileX + "," + chain[0].TileY + ") is not level with the coated tails (y " + tailY + ") with the icon [" + prolif + ",0]");
+        // profile up the ramp column (sheet #96..#92), then the feed row (sheet #91..#87)
+        double[][] want = { new double[] { xr, c - 5, 0 }, new double[] { xr, c - 4, 0 }, new double[] { xr, c - 3, 0.5 }, new double[] { xr, c - 2, 1 }, new double[] { xr, c - 1, 1 } };
+        var expect = new List<double[]>(want);
+        int step = side == "-x" ? 1 : -1;
+        for (int x = xr + step; side == "-x" ? x <= far : x >= far; x += step) expect.Add(new double[] { x, c - 1, 1 });
+        e.Check(chain.Count == expect.Count, tag + ": feed chain has " + chain.Count + " belts, drawn shape needs " + expect.Count + " (5 up the ramp column + " + (expect.Count - 5) + " across)");
+        for (int i = 0; i < Math.Min(chain.Count, expect.Count); i++)
+            e.Check(chain[i].TileX == (int)expect[i][0] && chain[i].TileY == (int)expect[i][1] && Near(chain[i].Z, expect[i][2], 1e-6),
+                tag + ": feed belt " + i + " at (" + chain[i].TileX + "," + chain[i].TileY + ") z " + Fmt(chain[i].Z) + ", drawn (" + expect[i][0] + "," + expect[i][1] + ") z " + expect[i][2]);
+        e.Check(chain[chain.Count - 1].Output == null && chain[chain.Count - 1].TileX == far, tag + ": feed does not end dead over the far coated lane x " + far);
+        foreach (Bld k in coaters)
+        {
+            int[] ft = Coaters.FeedTile(k);
+            e.Check(chain.Any(b => b.TileX == ft[0] && b.TileY == ft[1] && Near(b.Z, Coaters.FeedZ, 1e-6)), tag + ": no z 1 feed node behind the coater at (" + k.TileX + "," + k.TileY + ")");
+        }
+        return side;
+    }
+
+    /// Magnetic Coil 270/min on 3 assemblers Mk.I (the sheet's coil column count), magnet + copper ingot on tail lanes,
+    /// both coated, proliferator Mk.II (1142, as drawn).
+    static RowSpec CoilRowSpec()
+    {
+        return new RowSpec { Name = "coil", MachineItem = Ids.AsmMk1, RecipeId = Ids.RecipeMagneticCoil, Count = 3,
+            InputItems = new[] { Ids.Magnet, Ids.CopperIngot }, InputRates = new[] { 270.0, 135.0 }, OutputItem = Ids.MagneticCoil, OutputRate = 270,
+            TailItems = new[] { Ids.Magnet, Ids.CopperIngot }, CoatItems = new[] { Ids.Magnet, Ids.CopperIngot }, ProliferatorItem = Coaters.ProliferatorMk2, Data = gd };
+    }
+
+    static string MicroCoatersDrawnRow()
+    {
+        var e = new Errs();
+        RowSpec spec = CoilRowSpec();
+        Fragment f = Modules.MachineRow(spec);
+        foreach (string p in spec.Problems) e.L.Add("problem: " + p);
+        var coaters = f.Blds.Where(Coaters.IsCoater).ToList();
+        e.Check(coaters.Count == 2, coaters.Count + " coaters, expected 2 (one per input lane)");
+        string side = CheckDrawnCoaterShape(e, f.Blds, Coaters.ProliferatorMk2, "coil row");
+        // the 2-input row: in1 L1 on side A (x +2), in2 L1 on side B (x -2), output L2 on side B (x -3) takes the -x tile
+        // next to the bundle, so the ramp column goes to the +x side (x +3)
+        var laneX = f.Blds.Where(b => b.Kind == Kind.Belt && !Coaters.IsFeed(b)).Select(b => b.TileX).Distinct().OrderBy(x => x).ToList();
+        int xr = f.Blds.Where(Coaters.IsFeed).Select(b => b.TileX).DefaultIfEmpty(int.MinValue).Min();
+        Console.WriteLine("      coil row: lanes x " + string.Join(",", laneX.Select(x => x.ToString(CultureInfo.InvariantCulture)).ToArray()) + ", coaters at y "
+            + string.Join(",", coaters.Select(k => k.TileY.ToString(CultureInfo.InvariantCulture)).Distinct().ToArray()) + ", ramp column on the " + side + " side; notes: " + string.Join(" | ", spec.Notes.ToArray()));
+        Port fp = f.Ports.FirstOrDefault(Coaters.IsFeedPort);
+        e.Check(fp != null && fp.Y == f.Ports.Where(p => p.Kind == PortKind.In && !Coaters.IsFeedPort(p)).Min(p => p.Y), "feed port " + (fp == null ? "missing" : fp.ToString()) + " is not level with the input tails");
+        e.Check(fp != null && Math.Abs(fp.Rate - (270 + 135) / 24.0) < 1e-6, "proliferator rate " + (fp == null ? "-" : Fmt(fp.Rate)) + "/min, expected " + Fmt((270 + 135) / 24.0) + " (24 sprays per Mk.II item)");
+        // belt-level and coater checks on the bare fragment
+        var l0 = new Layout(gd); l0.Add(f); l0.Ports.AddRange(f.Ports);
+        ValidationReport belts = new Validator(gd, null).ValidateBelts(l0);
+        foreach (string m in belts.Errors) e.L.Add("belt checks: " + m);
+        var cr = new ValidationReport();
+        Coaters.Validate(l0, null, gd, cr);
+        foreach (string m in cr.Errors) e.L.Add("coater checks: " + m);
+        // full Validate + export with a 1-step plan (same steps as SelfTestDouble.cs ValidateFragment, which MakeBlock.exe does
+        // not compile): fresh fragment in a layout, tails to the edge, towers, PlanMapper plan, Validator, GameEmitter
+        var input = new PlanInput { TargetItemId = Ids.MagneticCoil, TargetPerMin = 270 };
+        var s = new PlanStep { RecipeId = Ids.RecipeMagneticCoil, BuildingItemId = Ids.AsmMk1, MachineCount = 3, Machines = 3, IncLevel = 2 };
+        s.InputsPerMin[Ids.Magnet] = 270; s.InputsPerMin[Ids.CopperIngot] = 135; s.OutputsPerMin[Ids.MagneticCoil] = 270;
+        input.Steps.Add(s);
+        input.ExternalItems.Add(Ids.Magnet); input.ExternalItems.Add(Ids.CopperIngot);
+        input.Options.ProliferatorItemId = Coaters.ProliferatorMk2;
+        Fragment f2 = Modules.MachineRow(CoilRowSpec());
+        var l = new Layout(gd);
+        l.Add(f2);
+        l.Ports.AddRange(f2.Ports);
+        var errs = new List<string>();
+        Lanes.TailsToEdge(l, l.Ports, (x, y) => l.Grid.IsFree(x, y), errs);
+        foreach (string m in errs) e.L.Add("tails: " + m);
+        foreach (Bld t in Modules.TeslaGrid(l, gd)) l.Add(t);
+        foreach (string m in l.Errors) e.L.Add("layout: " + m);
+        PlanMapper.Result pm = PlanMapper.Map(gd, input);
+        foreach (string m in pm.Errors) e.L.Add("plan: " + m);
+        if (pm.Plan == null) return e.Result();
+        ValidationReport rep = new Validator(gd, pm.Spec).Validate(l, pm.Plan);
+        foreach (string m in rep.Errors) e.L.Add("validate: " + m);
+        string exportState = "skipped";
+        if (rep.Ok)
+        {
+            ExportResult x = new GameEmitter(gd, GetCells()).Emit(l, Emitter.HeaderFor(l, pm.Plan, pm.Spec, gd));
+            var check = new ValidationReport();
+            GameEmitter.CheckExport(x, l, check);
+            foreach (string m in x.Errors.Concat(check.Errors)) e.L.Add("export: " + m);
+            exportState = x.Ok && check.Ok ? "ok" : "FAILED";
+            if (x.Ok && check.Ok)
+            {
+                string dir = System.IO.Path.Combine(root, @"work\selftest");
+                System.IO.Directory.CreateDirectory(dir);
+                System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "coil-row-3-coaters-drawn.txt"), x.Text);
+            }
+        }
+        Rect bx = l.Bounds();
+        Console.WriteLine("      coil row 3 + coaters: " + l.All.Count + " buildings, " + bx.Width + "x" + bx.Height + ", validator " + (rep.Ok ? "ok" : rep.Errors.Count + " error(s)") + ", export " + exportState);
+        if (rep.Ok) Console.WriteLine(Composer.Map(l));
         return e.Result();
     }
 
