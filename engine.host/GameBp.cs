@@ -188,6 +188,15 @@ public static class GameBp
         return r;
     }
 
+    /// Every building of an imported blueprint as engine records, in the game's array order (the inverse of FromRecords;
+    /// links are the linked records' "index" fields, which BpImport.ToLayout resolves).
+    public static List<BpBuilding> ToRecords(object bp)
+    {
+        var l = new List<BpBuilding>();
+        foreach (object g in Buildings(bp)) l.Add(ToRecord(g));
+        return l;
+    }
+
     /// Engine records -> new game BlueprintBuilding objects with outputObj/inputObj wired from tempOutputObjIdx /
     /// tempInputObjIdx (indices into the list). Errors (unknown field, bad link index) go to errors.
     public static List<object> FromRecords(IList<BpBuilding> recs, List<string> errors)

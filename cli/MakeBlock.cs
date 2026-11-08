@@ -13,6 +13,7 @@
 //   MakeBlock.exe --kit --item "Missile Turret" --rate 22.5 [--kit-dir <dir>] [--kit-work-dir <dir>] [--max-row 12]
 //   MakeBlock.exe --selftest
 //   MakeBlock.exe --check-gamebp <blueprint.txt>    (round-trips a blueprint through GameBp, writes nothing)
+//   MakeBlock.exe --patterns [<folder>] [--register] (analyses the user's pattern drawings, docs\patterns-design.md)
 // --data-root: folder with analysis\game-data.json, item-ids.json and refs\ (blueprint-tools); default: env
 // DSPFLAT_DATA_ROOT, else the exe folder.
 using System;
@@ -52,6 +53,7 @@ static class MakeBlock
         string gameDll = Opt(opt, "game-dll");
 
         if (opt.ContainsKey("check-gamebp")) return CheckGameBp(opt["check-gamebp"], gameDll);
+        if (opt.ContainsKey("patterns")) return RunPatterns(opt["patterns"], root, gameDll, opt.ContainsKey("register"));   // PATTERNS HOOK
         if (opt.ContainsKey("stats")) return Stats(opt["stats"], gameDll);
 
         if (opt.ContainsKey("selftest"))
@@ -340,8 +342,66 @@ static class MakeBlock
         return 0;
     }
 
+    // ---- pattern drawings (docs\patterns-design.md): --patterns [<folder>] [--register] ----
+    /// Loads every *.txt of the folder (default: <data root>\refs\patterns), prints Patterns.Analyze per file, the
+    /// P01..P17 catalog status and, with --register, registers the row cells in Geo and shows what Geo.Find returns for
+    /// the Assembler Mk.II 3/4-input lanes. Reads only; writes nothing.
+    static int RunPatterns(string folder, string root, string gameDll, bool register)
+    {
+        if (string.IsNullOrEmpty(folder)) folder = Path.Combine(root, @"refs\patterns");
+        if (!Directory.Exists(folder)) { Console.WriteLine("error: pattern folder not found: " + folder); return 2; }
+        GameBp.Init(gameDll);
+        var gd = FileGameSource.LoadData(root);
+        var files = new List<PatternFile>();
+        var rows = new List<KeyValuePair<string, PatternInfo>>();
+        foreach (string path in Directory.GetFiles(folder, "*.txt").OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+        {
+            string name = Path.GetFileName(path);
+            var pf = new PatternFile { Name = name };
+            files.Add(pf);
+            try
+            {
+                object bp = GameBp.Load(path);
+                pf.Desc = GameBp.Get(bp, "desc") as string;
+                List<BpBuilding> recs = GameBp.ToRecords(bp);
+                Layout l = BpImport.ToLayout(recs, gd, true);
+                pf.Infos = Patterns.Analyze(l, gd);
+                Rect b = l.Bounds();
+                Console.WriteLine("== " + name + ": " + recs.Count + " buildings, " + b.Width + "x" + b.Height + (string.IsNullOrEmpty(pf.Desc) ? "" : ", desc: " + pf.Desc.Replace("\n", " ")) + (Patterns.IsOk(pf.Desc) ? " [ok]" : ""));
+                foreach (string err in l.Errors.Take(5)) Console.WriteLine("   import: " + err);
+                foreach (PatternInfo i in pf.Infos)
+                {
+                    Console.WriteLine("   " + i.Describe(gd));
+                    if (i.Kind == PatternKind.Row || i.Kind == PatternKind.DoubleColumn) rows.Add(new KeyValuePair<string, PatternInfo>(name, i));
+                }
+            }
+            catch (Exception e) { Console.WriteLine("== " + name + ": cannot read: " + (e.InnerException ?? e).Message); }
+        }
+        Console.WriteLine("---- catalog ----");
+        foreach (CatalogStatus s in Patterns.Status(files))
+            Console.WriteLine(s.Entry.Id + "  " + s.State.PadRight(7) + " " + (s.File ?? s.Entry.FilePattern).PadRight(28) + " " + s.Entry.Purpose + (s.Why != null ? " (" + s.Why + ")" : ""));
+        if (!register) return 0;
+        Console.WriteLine("---- registered row cells ----");
+        foreach (var kv in rows)
+        {
+            List<SorterGeo> cells = Patterns.RowCells(kv.Value, kv.Key);
+            Geo.Register(cells, true);
+            foreach (SorterGeo g in cells) Console.WriteLine("   " + g);
+        }
+        Console.WriteLine("---- Geo.Find(2304, ...) for the 3/4-input lanes (machine yaw 0) ----");
+        var probes = new[] { new object[] { true, Dir.W, 1, -1 }, new object[] { true, Dir.W, 2, 0 }, new object[] { false, Dir.W, 3, 1 }, new object[] { true, Dir.E, 1, -1 }, new object[] { true, Dir.E, 2, 0 } };
+        foreach (object[] p in probes)
+        {
+            SorterGeo g = Geo.Find(Ids.AsmMk2, (bool)p[0], (Dir)p[1], (int)p[2], (int)p[3], 0);
+            Console.WriteLine("   " + ((bool)p[0] ? "in " : "out") + " " + p[1] + " L" + p[2] + " lat" + ((int)p[3] >= 0 ? "+" : "") + p[3] + " -> " + (g == null ? "none" : g.ToString()));
+        }
+        return 0;
+    }
+
     // ---- args ----
-    static readonly HashSet<string> Flags = new HashSet<string> { "plan-only", "selftest", "clean", "safe60", "map", "kit", "bus", "no-buffer", "quiet", "verbose" };
+    static readonly HashSet<string> Flags = new HashSet<string> { "plan-only", "selftest", "clean", "safe60", "map", "kit", "bus", "no-buffer", "quiet", "verbose", "register" };
+    /// Options whose value may be omitted (empty string when the next argument is another option or missing).
+    static readonly HashSet<string> OptionalValue = new HashSet<string> { "patterns" };
 
     public static Dictionary<string, string> ParseArgs(string[] args)
     {
@@ -351,6 +411,7 @@ static class MakeBlock
             if (!args[i].StartsWith("--")) throw new ArgumentException("unexpected argument '" + args[i] + "'");
             string k = args[i].Substring(2);
             if (Flags.Contains(k)) { d[k] = "1"; continue; }
+            if (OptionalValue.Contains(k) && (i + 1 >= args.Length || args[i + 1].StartsWith("--"))) { d[k] = ""; continue; }
             if (i + 1 >= args.Length) throw new ArgumentException("--" + k + " needs a value");
             d[k] = args[++i];
         }
@@ -372,6 +433,7 @@ static class MakeBlock
         Console.WriteLine("       [--raw \"Iron Ingot@Steel\"] (raw for one consumer step only) [--own \"Steel\"] (own supply rows)");
         Console.WriteLine("       MakeBlock.exe --kit --item <name> --rate <n> [--kit-dir <dir>] [--kit-work-dir <dir>] [--max-row 12] [tier options]");
         Console.WriteLine("       MakeBlock.exe --selftest | --check-gamebp <blueprint.txt>");
+        Console.WriteLine("       MakeBlock.exe --patterns [<folder>] [--register]   (analyse the pattern drawings; default folder <data root>\\refs\\patterns)");
     }
 }
 

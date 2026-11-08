@@ -172,3 +172,41 @@ fails if a core file uses `System.IO`, `Console.`, `Environment.`, `CurrentCultu
 - **Serialization** (MD5F, `BlueprintData`, export string) is host-side: CLI `DspFlat.Host.GameEmitter.Serialize(records,
   header, layout)` + `GameEmitter.CheckExport` (former `Validator.CheckExport`). Kit and bus modes (`Kit`, `Bus`) moved
   to `engine.host/` as CLI-only legacy modes (they export through the game DLL).
+
+## Patterns (feat-pat-loader, 2026-11-08; design in `docs/patterns-design.md`, catalog in `docs/pattern-catalog.md`)
+
+Pure model, namespace `DspFlat.Engine`:
+
+- **Import** `engine/BpImport.cs`: `BpImport.ToLayout(IList<BpBuilding> recs, GameData gd, bool dropStackedSplitters)`
+  turns plain records into a linked `Layout` (belts with icon parameters and `splitter-belt` cells, splitters with model
+  index + z, sorters with both ends / offsets, spray coaters as `Kind.Other`, depots, towers, machines with recipe).
+  Links follow `tempOutputObjIdx` / `tempInputObjIdx` (by the records' `index` field when unique, else by position);
+  `Bld.Index` = the record's index. Hosts convert game objects first: CLI `GameBp.ToRecords(bp)` (inverse of
+  `FromRecords`); `tests/SelfTest.cs FullLayout` is now `BpImport.ToLayout(GameBp.ToRecords(bp), gd, drop)`.
+- **Recognition** `engine/Patterns.cs`: `Patterns.Analyze(Layout, GameData)` -> `List<PatternInfo>`. Sheet-level
+  passes first (they span several disconnected lanes): `Comb` (icon-tail chain heads on one edge line, clustered with
+  gaps <= 2: `LaneCount`, `LanePitch`, `Edge`, `Items`), `Bridge` (maximal runs of raised belts bundled by tile
+  adjacency: `Runs`, `Crossed` lanes per run; coater feeds excluded), `SplitterTurn` (per splitter with outgoing belts:
+  `CornerDistances` = distance from the splitter centre to the first off-axis tile of each output, -1 = no turn).
+  Then connectivity groups (belt links + sorter links + coater-over-belt / coater feed + touching machine footprints;
+  teslas ignored) are classified: `CoaterRow` (coaters on one line: `Coaters`, `FeedCount`, `FeedZProfile` e.g.
+  `0/0.5/1`, `FeedOffset` -1 = one tile behind, `FeedDeadEnds`), machine lines grouped by item/recipe/yaw and column
+  (or row): two lines of one item 3..6 tiles apart sharing a lane -> `DoubleColumn` (`MachineCount`+`MachineCount2`,
+  `SharedLanes`, `LaneOffsets` from the midpoint), else `Row` (`MachineItem`, `RecipeId`, `MachineCount`, `MachineYaw`,
+  `Pitch`, `Flow`, `Lanes`). A `LaneInfo` is the first machine's sorter on that lane: `Side`, `Length`, `Lateral`,
+  `Slot`, `BeltDx/Dy`, `Sx..Ey` relative to the machine centre, `Input`, `Item` (icon tail first, else recipe output /
+  the one unclaimed recipe input; `ItemFromIcon`), `Note` when the other machines' sorters differ. Groups without
+  machines, coaters or a sheet-level match -> `Unknown` (bounds + counts). `Analyze` never throws (an exception becomes
+  an `Unknown` with `Note` "analysis error").
+- **Registration**: `Patterns.RowCells(PatternInfo row, string source)` -> `SorterGeo` cells (status "game", `Source` =
+  file + " #" + record index, `SourceKey` null so `Cells.Load` does not re-check them, `Name` suffixed with the file so
+  it never collides with a table cell); `Geo.Register(cells, preferred)` puts them before (preferred) or after the
+  built-in table for `Find` / `FindAny` / `All`; the same name registered again replaces the earlier cell.
+- **Catalog**: `Patterns.Catalog` = P01..P17 (`Id`, `FilePattern` `pNN-*.txt`, `Purpose`, `ProofKind`, `Proves`
+  predicate); `Patterns.Status(IEnumerable<PatternFile>)` (file name, header desc, infos) -> per entry
+  `missing | drawn | proven`: a file named `pNN-*` draws PNN, else any file whose analysis satisfies `Proves` (a sheet
+  with several patterns); proven when that file's desc contains the word `ok` (`Patterns.IsOk`).
+- **CLI**: `MakeBlock.exe --patterns [<folder>] [--register]` (default folder `<data root>\refs\patterns`): one line per
+  `PatternInfo` per file, the catalog table and, with `--register`, the registered row cells and what
+  `Geo.Find(2304, ...)` returns for the 3/4-input lanes. Self tests: `tests/SelfTestPatterns.cs` (`MAKEBLOCK_CASES=micro
+  patterns`).

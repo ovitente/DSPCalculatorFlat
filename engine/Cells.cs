@@ -182,6 +182,25 @@ public static class Geo
     /// Cells in table (preference) order.
     public static List<SorterGeo> All() { Build(); var l = new List<SorterGeo>(); foreach (var g in ordered) l.Add(g.Copy()); return l; }
 
+    /// PATTERNS HOOK (feat-pat-loader): external cells read from the user's pattern drawings (Patterns.RowCells).
+    /// preferred = consulted before the table (Find/Search walk `ordered` in order), else after it. A cell whose Name is
+    /// already registered replaces the earlier one. The built-in table itself is not touched.
+    public static void Register(IEnumerable<SorterGeo> cells, bool preferred)
+    {
+        Build();
+        if (cells == null) return;
+        var add = new List<SorterGeo>(cells);
+        for (int i = 0; i < add.Count; i++)
+        {
+            SorterGeo g = add[i];
+            if (g == null || g.Name == null) continue;
+            SorterGeo old;
+            if (table.TryGetValue(g.Name, out old)) ordered.Remove(old);
+            table[g.Name] = g;
+            if (preferred) ordered.Insert(Math.Min(i, ordered.Count), g); else ordered.Add(g);
+        }
+    }
+
     /// Lookup by machine class, direction, side and length among the cells at their NATIVE machine yaw (the result's
     /// MachineYaw tells which yaw to give the machine, e.g. 90 for the coil-360-v3 assembler cells). Proven cells only.
     /// side: world side of the machine the belt is on; lateral: belt tile offset along that side (dy for E/W, dx for N/S).
