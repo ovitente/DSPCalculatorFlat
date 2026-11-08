@@ -21,6 +21,8 @@ public class FpColumn
     public int Index;                                  // west -> east order
     public int X0;                                     // west edge of the column's tiles (after placement)
     public int Width;                                  // tiles, machines + their lanes
+    /// Free tiles reserved east of the column (0 = the next column's lanes are adjacent, rule 1; 1 = a belt corridor).
+    public int GapAfter;
     public readonly List<FpRow> Rows = new List<FpRow>();   // south -> north
     public override string ToString() { return "column " + Index + " x" + X0 + " w" + Width + ": " + string.Join(" / ", Rows.Select(r => r.Name).ToArray()); }
 }
@@ -35,6 +37,10 @@ public class FpRow
     public FpColumn Column;
     public int Y0, Y1;                                 // south / north tile rows the fragment occupies
     public bool FinalCell;                             // the target step (fed from up to 4 sides, buffer depot north of it)
+    /// Rule-4 feeder absorbed into the final cell: Frag is the final row's fragment (shared), not listed in Column.Rows.
+    public bool Absorbed;
+    public int Count;                                  // machines in this row
+    public int Part;                                   // 0-based lane part of the step
     public override string ToString() { return Name + " y" + Y0 + ".." + Y1; }
 }
 
@@ -53,6 +59,10 @@ public class FpConnection
     /// Several consumers of one producer: the connections share Source; the band puts one splitter per fork (2-way,
     /// rule 8) or feeds the next consumer from the lane tail (rule 8 / 12). Group = index of the shared source.
     public int Group = -1;
+    /// Flow the TARGET lane must have inside its row: S for a lane fed from the north band, N for a tail / stacked lane,
+    /// the port's own direction for a final cell lane. Rows are built with Flow N until RowSpec.LaneFlows exists; the
+    /// assembly rebuilds the rows with these flows (docs\floorplan-design.md item 5).
+    public Dir TargetFlow = Dir.N;
     public override string ToString() { return Route + " " + Item + " " + Rate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "/min " + (From == null ? "comb" : From.Name) + " -> " + To.Name; }
 }
 
@@ -69,6 +79,36 @@ public class FpPlan
     public readonly List<string> Notes = new List<string>();
     public readonly List<string> Errors = new List<string>();
     public bool Ok { get { return Errors.Count == 0; } }
+
+    /// Readable summary: columns with their rows and x/y, every connection with route / slot / group / target flow,
+    /// band and comb rows. gd for item names (null = ids).
+    public string Summary(GameData gd)
+    {
+        var c = System.Globalization.CultureInfo.InvariantCulture;
+        Func<int, string> n = id => gd != null ? gd.ItemName(id) : id.ToString(c);
+        var sb = new System.Text.StringBuilder();
+        foreach (FpColumn col in Columns)
+        {
+            sb.Append("column ").Append(col.Index).Append(" x").Append(col.X0).Append("..").Append(col.X0 + col.Width - 1).Append(" w").Append(col.Width);
+            if (col.GapAfter > 0) sb.Append(" gap ").Append(col.GapAfter);
+            sb.Append(": ");
+            sb.Append(string.Join(" / ", col.Rows.Select(r => (r.FinalCell ? "FINAL " : "") + r.Name + " x" + r.Count + " y" + r.Y0 + ".." + r.Y1).ToArray()));
+            sb.AppendLine();
+        }
+        foreach (FpRow r in Rows.Where(r => r.Absorbed)) sb.Append("absorbed: ").Append(r.Name).AppendLine();
+        foreach (FpConnection k in Connections)
+        {
+            sb.Append("  ").Append(k.Route).Append(' ').Append(n(k.Item)).Append(' ').Append(k.Rate.ToString("0.##", c)).Append("/min ")
+              .Append(k.From == null ? "comb" : k.From.Name).Append(" -> ").Append(k.To.Name)
+              .Append(k.Source != null ? " from (" + k.Source.X + "," + k.Source.Y + ")" + k.Source.Dir : "")
+              .Append(k.Target != null ? " to (" + k.Target.X + "," + k.Target.Y + ")" + k.Target.Dir : "")
+              .Append(" slot ").Append(k.Slot);
+            if (k.Group >= 0) sb.Append(" group ").Append(k.Group);
+            sb.Append(" lane flow ").Append(k.TargetFlow).AppendLine();
+        }
+        sb.Append("band y").Append(BandY0).Append(" lanes ").Append(BandLanes).Append("; comb y").Append(CombY).Append(" tails ").Append(CombTails).AppendLine();
+        return sb.ToString();
+    }
 }
 
 }
