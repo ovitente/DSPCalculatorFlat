@@ -18,6 +18,7 @@ public static partial class SelfTest
     static partial void RunFinalCases(); // FINALCELL HOOK: final machine cell (rules 4-7, 9, 11), tests/SelfTestFinal.cs (SelfTest.exe only)
     static partial void RunPackCases();  // feat-rules-pack: packing rules 14/12/8, implemented in SelfTestPack.cs (SelfTest.exe only)
     static partial void RunRows34Cases(); // PATTERNS HOOK: drawn rows P08/P09 (3/4-input preset), tests\SelfTestRows34.cs (SelfTest.exe only)
+    static partial void RunPatternCases();   // PATTERNS HOOK: engine\BpImport.cs + engine\Patterns.cs, tests\SelfTestPatterns.cs (SelfTest.exe only)
     static string root, bpDir;
     static GameData gd;
     static Cells cells;
@@ -105,6 +106,7 @@ public static partial class SelfTest
         RunPackCases();  // feat-rules-pack: engine\Packing.cs (SelfTestPack.cs)
         RunLabCases();   // feat-labs: Matrix Lab towers, collider rows (SelfTestLabs.cs; partial method, absent in MakeBlock.exe)
         RunRows34Cases(); // PATTERNS HOOK: engine cells / MachineRow preset vs the drawn rows P08/P09 (SelfTestRows34.cs)
+        RunPatternCases();   // PATTERNS HOOK: pattern drawings import + recognition (SelfTestPatterns.cs)
         // spray coaters (engine\Coaters.cs, COATERS HOOK; cases in tests\SelfTestCoaters.cs)
         Case("micro coaters: 2-input final step incLevel 1 -> 2 coaters + 1 proliferator lane with icon tail, valid + export", MicroCoaters);
         Case("micro coaters: incLevel 0 -> no coaters, no proliferator lane; validator rejects a coater without its feed node", MicroCoatersNone);
@@ -1432,55 +1434,10 @@ public static partial class SelfTest
     /// Every building of a game blueprint as a linked abstract layout (belts, splitters with model + z, sorters, machines,
     /// depots, towers). dropStacked: leave out a splitter stacked on another splitter without belts (the user's accidental
     /// one at (28,22) z 2; analysis\user-upgrade-turbine.md section 4).
+    /// Thin wrapper (feat-pat-loader): game objects -> plain records (host) -> engine\BpImport.ToLayout (pure model).
     static Layout FullLayout(object bp, bool dropStacked)
     {
-        var l = new Layout(gd);
-        var byIdx = new Dictionary<int, Bld>();
-        var recs = GameBp.Buildings(bp).Cast<object>().ToList();
-        var linkedTo = new HashSet<object>();
-        foreach (object r in recs) { object o = GameBp.Get(r, "outputObj"), i = GameBp.Get(r, "inputObj"); if (o != null && Ids.IsBelt(GameBp.In(r, "itemId"))) linkedTo.Add(o); if (i != null && Ids.IsBelt(GameBp.In(r, "itemId"))) linkedTo.Add(i); }
-        foreach (object r in recs)
-        {
-            int item = GameBp.In(r, "itemId");
-            double x = GameBp.Fl(r, "localOffset_x"), y = GameBp.Fl(r, "localOffset_y"), z = GameBp.Fl(r, "localOffset_z");
-            double yaw = GameBp.Fl(r, "yaw");
-            int[] par = GameBp.Get(r, "parameters") as int[];
-            Bld n;
-            if (Ids.IsBelt(item))
-            {
-                n = Bld.Belt(item, x, y, yaw, 0, null);
-                if (Math.Abs(x - Math.Round(x)) > 0.01 || Math.Abs(y - Math.Round(y)) > 0.01) n.Cell = SplitterGeo.BeltCell;
-                if (par != null && par.Length == 2 && par[0] != 0) n.Parameters = (int[])par.Clone();
-            }
-            else if (item == Ids.Splitter)
-            {
-                object inp = GameBp.Get(r, "inputObj");
-                if (dropStacked && z > 1.5 && inp != null && GameBp.In(inp, "itemId") == Ids.Splitter && !linkedTo.Contains(r)) continue;
-                n = Bld.Splitter(x, y, par != null && par.Length > 0 && par[0] == 1);
-                n.ModelIndex = GameBp.In(r, "modelIndex");
-            }
-            else if (Ids.IsSorter(item))
-                n = new Bld { Kind = Kind.Sorter, ItemId = item, X = x, Y = y, X2 = GameBp.Fl(r, "localOffset_x2"), Y2 = GameBp.Fl(r, "localOffset_y2"), Z2 = GameBp.Fl(r, "localOffset_z2"),
-                    Yaw = yaw, Yaw2 = GameBp.Fl(r, "yaw2"), Parameters = par != null ? (int[])par.Clone() : new[] { 1 },
-                    InputOffset = GameBp.In(r, "inputOffset"), OutputOffset = GameBp.In(r, "outputOffset") };
-            else if (item == Ids.DepotMk1) n = Bld.Depot(x, y);
-            else if (item == Ids.Tesla) n = Bld.Tesla(x, y);
-            else n = Bld.Machine(item, x, y, yaw, GameBp.In(r, "recipeId"));
-            n.Z = z; if (n.Kind != Kind.Sorter) n.Z2 = z;
-            n.OutputToSlot = GameBp.In(r, "outputToSlot"); n.InputFromSlot = GameBp.In(r, "inputFromSlot");
-            n.OutputFromSlot = GameBp.In(r, "outputFromSlot"); n.InputToSlot = GameBp.In(r, "inputToSlot");
-            byIdx[GameBp.In(r, "index")] = n;
-            l.Add(n);
-        }
-        foreach (object r in recs)
-        {
-            Bld n, t;
-            if (!byIdx.TryGetValue(GameBp.In(r, "index"), out n)) continue;
-            object o = GameBp.Get(r, "outputObj"), i = GameBp.Get(r, "inputObj");
-            if (o != null && byIdx.TryGetValue(GameBp.In(o, "index"), out t)) n.Output = t;
-            if (i != null && byIdx.TryGetValue(GameBp.In(i, "index"), out t)) n.Input = t;
-        }
-        return l;
+        return BpImport.ToLayout(GameBp.ToRecords(bp), gd, dropStacked);
     }
 
     static string GameProvenUserTurbine()
