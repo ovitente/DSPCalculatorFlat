@@ -13,7 +13,7 @@ public static partial class SelfTest
 {
     const string DrawnDir = @"refs\patterns";
     const string DrawnP08 = "p08-asm-row-3in.txt", DrawnP09 = "p09-asm-row-4in.txt", DrawnP12 = "p12-input-edge-comb.txt", DrawnSheet = "p-sheet-001.txt";
-    const int ElectricMotorId = 1203, MissileSetId = 1301;
+    const int ElectricMotorId = 1203;   // MissileSetId (1609) is defined in SelfTestRows34.cs
     const int RecipeElectricMotor = 97, RecipeMissileSet = 144;
 
     static partial void RunDrawnCases()
