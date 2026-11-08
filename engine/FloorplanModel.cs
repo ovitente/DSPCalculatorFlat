@@ -53,6 +53,19 @@ public class FpConnection
     /// Several consumers of one producer: the connections share Source; the band puts one splitter per fork (2-way,
     /// rule 8) or feeds the next consumer from the lane tail (rule 8 / 12). Group = index of the shared source.
     public int Group = -1;
+    // ---- filled by Bands.Lay (additive, read by the assembly step) ----
+    /// Chain name of the laid belts ("band:<item>#k", "comb:<item>#k", "straight:<item>#k", "merge:<item>#k").
+    public string Chain;
+    /// Belts laid for this connection (ground + raised nodes, in flow order; splitter cell belts excluded).
+    public readonly List<Bld> Belts = new List<Bld>();
+    /// Raised (z 0.5) nodes among Belts = one-tile bridges over crossed ground lanes.
+    public int Bridges;
+    /// Comb: the block input port created on the tail tile (icon [item,0]); also appended to Layout.Ports.
+    public Port Tail;
+    /// Fork: the 2-way splitter laid for this group (set on the group's connections that pass through it).
+    public Bld Splitter;
+    /// True when Bands.Lay laid the belts of this connection.
+    public bool Laid;
     public override string ToString() { return Route + " " + Item + " " + Rate.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "/min " + (From == null ? "comb" : From.Name) + " -> " + To.Name; }
 }
 
