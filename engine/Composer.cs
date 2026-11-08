@@ -77,7 +77,7 @@ public partial class Composer   // FINALCELL + EDGEBUS HOOK: partial (engine/Fin
         var r = new Tried { L = l, A = att, RowGap = rowGap, LineGap = lineGap, Strategy = strategy, Mode = mode, Raise = raise, Heavy = heavy, Prio = prio, Gaps = gaps };
         r.Score = l.Errors.Count + att.PowerProblems.Count;
         r.Name = "row gap " + rowGap + ", line gap " + lineGap + (gaps != null ? " (squeezed " + string.Join("/", gaps.Select(g => g.ToString(CultureInfo.InvariantCulture)).ToArray()) + ")" : "")
-            + ", route order " + strategy + ", " + ModeNames[mode & 3] + ((mode & 4) != 0 ? ", 3-4 input rows not stacked" : "") + ((mode & 8) != 0 ? ", line rows mirrored" : "") + ((mode & 16) != 0 ? ", feeds reversed" : "") + ((mode & 32) != 0 ? ", no tail pickup" : "") + (raise ? ", raw rows raised to their consumers" : "") + (heavy ? ", heaviest feed stacked" : "")
+            + ", route order " + strategy + ", " + ModeNames[mode & 3] + ((mode & 4) != 0 ? ", 3-4 input rows not stacked" : "") + ((mode & 8) != 0 ? ", line rows mirrored" : "") + ((mode & 16) != 0 ? ", feeds reversed" : "") + ((mode & 32) != 0 ? ", no tail pickup" : "") + ((mode & DoubleRows.ModeBit) != 0 ? ", double rows" : "") /* PATTERNS HOOK: double rows */ + (raise ? ", raw rows raised to their consumers" : "") + (heavy ? ", heaviest feed stacked" : "")
             + (prio.Count > 0 ? ", " + prio.Count + " routes reordered" : "");
         if (r.Score == 0)
         {
@@ -138,6 +138,7 @@ public partial class Composer   // FINALCELL + EDGEBUS HOOK: partial (engine/Fin
         int[] grp = { 0, 4, 8, 12, 16, 20, 24, 28 };
         var modeSets = new List<int[]> { tall ? grp.Concat(new[] { 1, 5 }).ToArray() : grp, multi ? new[] { 2, 3 } : new[] { 2 } };
         if (Packing.Enabled && multi) { modeSets.Insert(1, modeSets[0].Select(m => m | 32).ToArray()); modeSets.Add(new[] { 3 | 32 }); }   // PACK HOOK: pre-rules packing (3-way, own rows) only when tails find nothing valid
+        if (DoubleRows.PlanHasCandidate(plan)) modeSets[0] = modeSets[0].Concat(modeSets[0].Select(m => m | DoubleRows.ModeBit)).ToArray();   // PATTERNS HOOK: double rows (engine\DoubleRows.cs): the grouped modes once more with two-column raw rows; the cheaper valid attempt wins
         int fm = EngineTuning.ForcedMode;   // debug: one row mode only
         if (fm >= 0 && fm <= 63) modeSets = new List<int[]> { new[] { fm } }; // PACK HOOK: bit 32
         foreach (int[] modes in modeSets)
@@ -466,6 +467,7 @@ public partial class Composer   // FINALCELL + EDGEBUS HOOK: partial (engine/Fin
         readonly bool mirrorBase, reverseFeeds;   // mode bits 8/16
         readonly bool packTails;      // PACK HOOK (engine\Packing.cs, rules 8/12): mode bit 32 clear = 2-way splitters + tail pickup
         readonly bool noStackMulti;   // mode bit 4: rows with 3-4 inputs start their own line (entries reachable from below)
+        readonly bool doubleRows;     // PATTERNS HOOK: double rows (engine\DoubleRows.cs): mode bit 64 = raw-fed rows as two facing columns
         readonly HashSet<long> bridged = new HashSet<long>();   // tiles crossed by a bridge and its feet (no two-level crossing, no side-join)
         readonly bool raise;          // raw-only rows feeding another line move up toward their consumer
         readonly bool heavy;          // stack a consumer on its heaviest feed (else on the lowest producer line)
@@ -479,6 +481,7 @@ public partial class Composer   // FINALCELL + EDGEBUS HOOK: partial (engine/Fin
             this.gd = gd; this.spec = spec; this.plan = plan; this.rowGap = rowGap; this.lineGap = lineGap; this.strategy = strategy;
             this.splitMode = (mode & 3) == 3; this.grouped = (mode & 3) <= 1; this.capMachines = (mode & 3) == 1 ? CapMachines : 0; this.noStackMulti = (mode & 4) != 0; this.mirrorBase = (mode & 8) != 0; this.reverseFeeds = (mode & 16) != 0;
             this.packTails = Packing.Enabled && (mode & 32) == 0;   // PACK HOOK
+            this.doubleRows = DoubleRows.Enabled && (mode & DoubleRows.ModeBit) != 0;   // PATTERNS HOOK: double rows
             this.raise = raise; this.heavy = heavy; this.gapsAfter = gapsAfter;
             this.priority = priority ?? new HashSet<string>();
             double br = gd != null ? gd.BeltRate(spec.Tiers.Belt) : 0;
@@ -781,7 +784,7 @@ public partial class Composer   // FINALCELL + EDGEBUS HOOK: partial (engine/Fin
                 ProliferatorItem = spec.ProliferatorItem
             };
             Fragment f;
-            try { f = Modules.MachineRow(rs); }
+            try { f = DoubleRows.BuildRow(rs, doubleRows, beltRate); }   // PATTERNS HOOK: double rows: two facing columns when the row is eligible (mode bit 64, raw-fed, >= 4 machines), else Modules.MachineRow
             catch (NotImplementedException) { throw; }
             catch (Exception e) { errors.Add("composer: MachineRow " + r.Name + ": " + e.Message); return null; }
             if (f == null) { errors.Add("composer: MachineRow " + r.Name + " returned nothing"); return null; }
@@ -1134,9 +1137,11 @@ public partial class Composer   // FINALCELL + EDGEBUS HOOK: partial (engine/Fin
                 for (int i = 0; i < r.InItems.Length; i++)
                 {
                     if (!r.Step.IsExternal(plan, r.InItems[i])) continue;
-                    Port p = InPort(r, r.InItems[i]);
-                    rawFeeds.Add(new KeyValuePair<RowInfo, Port>(r, p));
-                    if (!(p.Y == edgeY && p.Dir == Dir.N)) { int id = nextConn++; rawConn[p] = id; Reserve(p.PrevX, p.PrevY, id); }
+                    foreach (Port p in DoubleRows.InPorts(r.Frag, r.InItems[i]))   // PATTERNS HOOK: double rows: "in:<item>" plus the second column's "in:<item>#B"
+                    {
+                        rawFeeds.Add(new KeyValuePair<RowInfo, Port>(r, p));
+                        if (!(p.Y == edgeY && p.Dir == Dir.N)) { int id = nextConn++; rawConn[p] = id; Reserve(p.PrevX, p.PrevY, id); }
+                    }
                 }
             // COATERS HOOK: proliferator feed ports are block input lanes like the raw ones
             foreach (var r in rowsOk)
@@ -1416,8 +1421,8 @@ public partial class Composer   // FINALCELL + EDGEBUS HOOK: partial (engine/Fin
         {
             Bld pb = PortBelt(p);
             int item = 0;
-            foreach (int it in r.InItems) if (FindPort(r.Frag, "in:" + it) == p) item = it;
-            bool coat = Coaters.IsFeedPort(p);   // COATERS HOOK: proliferator feed port carries its own item and rate
+            foreach (int it in r.InItems) if (DoubleRows.InPorts(r.Frag, it).Contains(p)) item = it;   // PATTERNS HOOK: double rows (second lane port)
+            bool coat = Coaters.IsFeedPort(p) || DoubleRows.IsSecondLane(p);   // COATERS HOOK: proliferator feed port carries its own item and rate; PATTERNS HOOK: so does a double row's column B lane
             if (coat) item = p.Item;
             double rate = coat ? p.Rate : r.InRates[Array.IndexOf(r.InItems, item)];
             if (pb == null) { errors.Add("composer: raw port " + p + " has no belt"); return; }
