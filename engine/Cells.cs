@@ -102,7 +102,13 @@ public class SorterGeo
 
     /// Creates the sorter between machine m and belt b (b must sit on (m.X+BeltDx, m.Y+BeltDy), m.Yaw == MachineYaw).
     /// Belt offset = max(0, floor(20*d)), d =displacement of the belt-side end along the belt flow (patterns.md 0).
-    public Bld Make(Bld machine, Bld belt, int sorterItem, int carries)
+    public Bld Make(Bld machine, Bld belt, int sorterItem, int carries) { return Make(machine, belt, sorterItem, carries, false); }
+
+    /// laneContinuesBehind: the belt tile has a predecessor along its flow. The game then stores a NEGATIVE output
+    /// offset for an output sorter whose belt-side end lies before the tile centre (refs\patterns\p08-asm-row-3in.txt
+    /// #5/#9/#13: d = -0.201 -> -5; the 3-input template #127: d = -0.002 -> -1), and 0 where the lane starts at
+    /// that tile (p08 #17). Input sorters keep the clamp at 0 (coil-360-v3 assembler cells: d = -0.158, offset 0).
+    public Bld Make(Bld machine, Bld belt, int sorterItem, int carries, bool laneContinuesBehind)
     {
         if (machine == null || belt == null) throw new ArgumentNullException(machine == null ? "machine" : "belt");
         if (belt.Kind != Kind.Belt) throw new ArgumentException(Name + ": belt argument is a " + belt.Kind);
@@ -120,7 +126,8 @@ public class SorterGeo
         double bx = BeltToMachine ? sx : ex, by = BeltToMachine ? sy : ey;
         double fy = belt.Yaw * Math.PI / 180.0;
         double d = (bx - belt.X) * Math.Sin(fy) + (by - belt.Y) * Math.Cos(fy);
-        int off = Math.Max(0, (int)Math.Floor(20.0 * d + 1e-6));   // proven files store 0 for a negative displacement
+        int off = (int)Math.Floor(20.0 * d + 1e-6);
+        if (BeltToMachine || !laneContinuesBehind) off = Math.Max(0, off);   // proven files store 0 for a negative input displacement
         Bld s = BeltToMachine
             ? Bld.Sorter(sorterItem, sx, sy, ex, ey, Yaw, belt, machine, Slot, Length, off, carries)
             : Bld.Sorter(sorterItem, sx, sy, ex, ey, Yaw, machine, belt, Slot, Length, off, carries);
@@ -159,12 +166,17 @@ public static class Geo
         { "turb2u", @"refs\engine-turbine-60-v2-userupgrade.txt" },
         { "lent", @"refs\lent-begin.txt" },
         { "mk3", @"t-tpl\Assemblers mk III.txt" },
-        { "plane", @"2-smelt\Smelters.txt" },
-        { "fuel", @"5-chem\Fuel.txt" },
+        // the user's Blueprint folder was reorganised (2026-11): the old path first, the new location as the alternative
+        { "plane", @"2-smelt\Smelters.txt|1-t1\Smelters.txt" },
+        { "fuel", @"5-chem\Fuel.txt|1-t1\Fuel.txt" },
         // feat-labs: Matrix Lab tower cells (LabTowers.cs) and Miniature Particle Collider cells (Collider.cs)
         { LabTowers.SourceKey, LabTowers.SourceFile },
         { Collider.SourceKey, Collider.SourceFile },
         { Collider.SourceKey2, Collider.SourceFile2 },
+        // pattern rows drawn by the user in game (docs\patterns-design.md P08 / P09): copies in blueprint-tools\refs\patterns,
+        // originals in the user's Blueprint\t-tpl folder
+        { "p08", @"refs\patterns\p08-asm-row-3in.txt|t-tpl\p08-asm-row-3in.txt" },
+        { "p09", @"refs\patterns\p09-asm-row-4in.txt|t-tpl\p09-asm-row-4in.txt" },
     };
 
     static Dictionary<string, SorterGeo> table;
@@ -312,6 +324,14 @@ public static class Geo
     static void Add(int item, double myaw, bool toMachine, int bdx, int bdy, double sx, double sy, double ex, double ey,
                     int slot, int len, string status, string key, int idx, string pattern, string note)
     {
+        Add(item, myaw, toMachine, bdx, bdy, sx, sy, ex, ey, slot, len, status, key, idx, pattern, note, null);
+    }
+
+    /// nameTag: appended to the generated name when the same geometry class (side / length / lateral) already has a
+    /// cell from another blueprint (e.g. " (p08)"); lookups match by geometry, so the first cell in table order wins.
+    static void Add(int item, double myaw, bool toMachine, int bdx, int bdy, double sx, double sy, double ex, double ey,
+                    int slot, int len, string status, string key, int idx, string pattern, string note, string nameTag)
+    {
         var g = new SorterGeo
         {
             MachineItem = item, MachineYaw = myaw, BeltToMachine = toMachine, BeltDx = bdx, BeltDy = bdy,
@@ -320,7 +340,7 @@ public static class Geo
         };
         g.Yaw = Dirs.Yaw(Dirs.FromYaw(Math.Atan2(ex - sx, ey - sy) * 180.0 / Math.PI));
         g.Source = SourceFiles[key].Split('|')[0] + " #" + idx;
-        g.Name = MakeName(g);
+        g.Name = MakeName(g) + (nameTag ?? "");
         if (table.ContainsKey(g.Name)) throw new InvalidOperationException("duplicate sorter cell " + g.Name);
         table[g.Name] = g; ordered.Add(g);
     }
@@ -378,6 +398,20 @@ public static class Geo
         Add(A2, 0, IN, -3, 0, -3, -0.007, -0.88, 0, 10, 2, "game", "in3", 24, "COL-PAIR-3 right", "Sorter Mk.III in the source");
         Add(A2, 0, IN, -2, -1, -2, -0.798, -0.88, -0.795, 9, 1, "game", "in3", 31, "COL-PAIR-3 right", "Sorter Mk.III in the source");
         Add(A2, 0, OUT, 2, 0, 0.88, 0, 2, -0.001, 4, 1, "game", "in3", 1, "COL-PAIR-3 right", "Sorter Mk.III in the source");
+
+        // ======== PATTERN ROWS (rows agent, docs\patterns-design.md): keep this region at the END of the table ========
+        // ---- P08 refs\patterns\p08-asm-row-3in.txt: 4 Assembler Mk.II yaw 0, Electric Motor, lanes flow N, pitch 4.
+        // Numbers are relative to the first record's machine (#0 at (4,17)). West: x2 L1 in (slot 9), x1 L2 in (slot 10),
+        // x0 L3 OUT (slot 11); east: x6 L1 in (slot 5). Same geometry class as the COL-PAIR-3 cells above where the
+        // names collide (" (p08)" tag): those stay first in table order, the drawn row is the proof of the 3-input preset.
+        Add(A2, 0, IN, -2, -1, -2, -0.794, -0.878, -0.795, 9, 1, "game", "p08", 8, "ROW-3IN (P08) west L1", "Sorter Mk.II; inputOffset 4", " (p08)");
+        Add(A2, 0, IN, -3, 0, -3, 0.002, -0.877, 0, 10, 2, "game", "p08", 6, "ROW-3IN (P08) west L2", "Sorter Mk.II; inputOffset 0", " (p08)");
+        Add(A2, 0, OUT, -4, 1, -0.877, 0.795, -4, 0.799, 11, 3, "game", "p08", 5, "ROW-3IN (P08) west L3 output",
+            "output beyond two input lanes; outputOffset -5 (0 at the first machine, where the lane starts)");
+        Add(A2, 0, IN, 2, -1, 2, -0.794, 0.878, -0.795, 5, 1, "game", "p08", 7, "ROW-3IN (P08) east L1", "Sorter Mk.II; inputOffset 4");
+        // ---- P09 refs\patterns\p09-asm-row-4in.txt: same frame, Missile Set, plus east x7 L2 in (slot 4).
+        Add(A2, 0, IN, 3, 0, 3, 0.002, 0.877, 0, 4, 2, "game", "p09", 6, "ROW-4IN (P09) east L2", "Sorter Mk.II; inputOffset 0", " (p09)");
+        // ======== END PATTERN ROWS ========
 
         // ---- derived outputs: every L2/L3 input reversed, unless a proven output with the same key exists ----
         var proven = new List<SorterGeo>(ordered);
