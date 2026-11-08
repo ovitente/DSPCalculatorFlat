@@ -89,3 +89,26 @@ Agreed with the user on 2026-11-02 (grilling session). Each phase ends with a ch
 - The search router still produces long perimeter loops (`docs/turret-7.5-engine-2026-11-02.png`, 48x30 vs the
   user's 40x26). Remaining rules are expected to come from the pattern catalog rather than more search.
 - Selftest full: 83 pass / 0 fail / 1 skip (missing user file).
+
+## Status (2026-11-08): first pattern round
+
+User drawings: `p08-asm-row-3in`, `p09-asm-row-4in`, `p12-input-edge-comb`, one sheet with P12/P13/P14/P10/P01/P02
+(copies in `blueprint-tools\refs\patterns\`). Design and split: `docs/patterns-design.md`.
+- **Rows P08/P09** are game cells (`Geo` "PATTERN ROWS"); the 3/4-input preset is the user's (output L3 on side A
+  behind the two inputs, pitch 4); `MachineRow` reproduces both files record by record (`tests/SelfTestRows34.cs`).
+- **Import + recognition**: `engine/BpImport.cs` (records -> Layout, pure), `engine/Patterns.cs` (Analyze: Row,
+  DoubleColumn, Comb, Bridge, SplitterTurn, CoaterRow; `Geo.Register`; catalog status), CLI `MakeBlock --patterns
+  [folder] [--register]`.
+- **Acceptance**: every drawing passes the Validator (`tests/SelfTestDrawn.cs`); relaxed to what the drawings prove:
+  diagonal belt links and chord yaw (P14 variant 2), S4 "turn on a ramp foot" = warning, stacked tail/end over a ground
+  end, coater feed from an icon tail with ramp z 0/0.5/1, sorter skew up to the game's 24 deg, lane stub to the block
+  edge inside the last machine's footprint. Adjacent bridges (P13) and tails at pitch 1 (P12) were already accepted.
+- **Double rows** (`engine/DoubleRows.cs`, two facing columns sharing the middle output lane, cells from the sheet):
+  12 iron smelters 720/min go from 7x41 to 11x22. `DoubleRows.Enabled` is **off** by default: two lane-split cases
+  expect one lane per raw item, and the user's converging tails are not modelled yet.
+- Found on the sheet: the west smelter column's ore sorters are drawn machine -> belt (reversed); not used as proof.
+- Open: coater generator vs drawing (coaters 5 below the first pickup on the bundled lanes, ramp next to the bundle);
+  Validator rule 10 rejects the coil block's tail order A,B|B,A that the user drew; the x47..49 three-level stack
+  (EdgeBus territory). Next: drive the composer from patterns (rows + double rows + comb + bundle bridges) instead
+  of the gap/mode search; in-game test of a generated 3-input row.
+- Selftest full: 101 pass / 0 fail / 1 skip (missing user file).
