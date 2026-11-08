@@ -49,6 +49,18 @@ static class MakeBlock
         string root = DataRoot(opt);
         Cells.ToolsRoot = root;
         EnvTuning.Apply();
+        // --floorplan on|off|only: pattern-driven composer first / search composer only / floorplan only (no fallback, its errors are printed)
+        string fpOpt = Opt(opt, "floorplan");
+        if (fpOpt != null)
+        {
+            switch (fpOpt.ToLowerInvariant())
+            {
+                case "on": EngineTuning.Floorplan = true; EngineTuning.FloorplanOnly = false; break;
+                case "off": EngineTuning.Floorplan = false; EngineTuning.FloorplanOnly = false; break;
+                case "only": EngineTuning.Floorplan = true; EngineTuning.FloorplanOnly = true; break;
+                default: throw new ArgumentException("--floorplan must be on, off or only");
+            }
+        }
         string bpDir = Opt(opt, "bp-dir") ?? DefaultBpDir;
         string gameDll = Opt(opt, "game-dll");
 
@@ -429,6 +441,7 @@ static class MakeBlock
         Console.WriteLine("       [--short-desc text] [--desc text] [--bp-dir dir] [--game-dll path] [--data-root blueprint-tools dir]");
         Console.WriteLine("       [--safe60] (E-W machine pitch/colliders safe up to 60 deg latitude) [--map] (ASCII map)");
         Console.WriteLine("       [--no-buffer] (no buffer depot at the product end) [--quiet] (plain progress lines) [--verbose] (full report)");
+        Console.WriteLine("       [--floorplan on|off|only] (pattern-driven composer first with search fallback | search only | floorplan only, no fallback)");
         Console.WriteLine("       MakeBlock.exe --stats <blueprint.txt>   (buildings, belts, corners, raised runs, splitter models, size)");
         Console.WriteLine("       [--raw \"Iron Ingot@Steel\"] (raw for one consumer step only) [--own \"Steel\"] (own supply rows)");
         Console.WriteLine("       MakeBlock.exe --kit --item <name> --rate <n> [--kit-dir <dir>] [--kit-work-dir <dir>] [--max-row 12] [tier options]");

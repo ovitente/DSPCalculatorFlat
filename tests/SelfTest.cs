@@ -24,6 +24,7 @@ public static partial class SelfTest
     static partial void RunLaneFlowCases(); // FLOORPLAN HOOK: per-lane flows (RowSpec.InputFlows / OutputFlow), tests\SelfTestLaneFlow.cs (SelfTest.exe only)
     static partial void RunFloorplanCases(); // FLOORPLAN HOOK: pattern-driven floorplan (engine\Floorplan.cs), tests\SelfTestFloorplan.cs (SelfTest.exe only)
     static partial void RunBandCases();   // FLOORPLAN HOOK: band / comb belts (engine\Bands.cs), tests\SelfTestBands.cs (SelfTest.exe only)
+    static partial void RunFloorplanE2ECases(); // FLOORPLAN HOOK: full path through the floorplan composer, tests\SelfTestFloorplanE2E.cs (SelfTest.exe only)
     static string root, bpDir;
     static GameData gd;
     static Cells cells;
@@ -39,6 +40,7 @@ public static partial class SelfTest
     {
         root = rootDir; bpDir = blueprintDir; Cells.ToolsRoot = rootDir;
         passed = failed = skipped = 0;
+        EngineTuning.Floorplan = false;   // FLOORPLAN HOOK: the older cases test the search composer; the floorplan's own cases switch it on themselves
         try { gd = GameDataFiles.Load(Path.Combine(root, @"analysis\game-data.json"), Path.Combine(root, "item-ids.json")); }
         catch (Exception e) { Console.WriteLine("FAIL  game data: " + Msg(e)); return 1; }
 
@@ -121,6 +123,7 @@ public static partial class SelfTest
         RunDrawnCases(); // PATTERNS HOOK: drawn pattern files (SelfTestDrawn.cs)
         RunFloorplanCases(); // FLOORPLAN HOOK: engine\Floorplan.cs (SelfTestFloorplan.cs)
         RunBandCases();  // FLOORPLAN HOOK: engine\Bands.cs (SelfTestBands.cs)
+        RunFloorplanE2ECases(); // FLOORPLAN HOOK: engine\FloorplanComposer.cs (SelfTestFloorplanE2E.cs)
         Console.WriteLine("selftest: " + passed + " passed, " + failed + " failed, " + skipped + " skipped");
         return failed == 0 && skipped == 0 ? 0 : 1;
     }

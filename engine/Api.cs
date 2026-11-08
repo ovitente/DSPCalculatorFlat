@@ -172,24 +172,55 @@ public static class FlatEngine
             Lanes.ClampToPrototypes(gd, spec, game.Cells, res.Warnings);
 
             if (stop()) { res.Errors.Add(StopText(timedOut)); return res; }
-            say(0.05, "laying out rows and routing belts");
-            var composer = new Composer(gd, spec);
-            composer.TimeBudgetMs = budget > 0 ? Math.Min(budget, EngineTuning.ComposeBudgetMs) : EngineTuning.ComposeBudgetMs;
-            composer.Cancel = stop;
-            int attempts = 0;
-            composer.OnProgress = s => { attempts++; say(0.05 + 0.8 * (1 - 1.0 / (1 + attempts / 40.0)), s); };
-            Layout layout = composer.Compose(mapped.Plan);
+            // FLOORPLAN HOOK: pattern-driven composer first; on any problem a note and the search composer (EngineTuning.FloorplanOnly: errors)
+            Layout layout = null;
+            bool composerStopped = false;
+            ProductionPlan usedPlan = mapped.Plan;
+            if (EngineTuning.Floorplan)
+            {
+                say(0.05, "laying out the floorplan");
+                var fpNotes = new List<string>();
+                // own copy of the plan: the rule-14 margin mutates it, the search composer needs the original
+                ProductionPlan fpPlan = PlanMapper.Map(gd, plan).Plan;
+                Layout fl = FloorplanComposer.Compose(gd, spec, fpPlan, fpNotes);
+                res.Notes.AddRange(fpNotes);
+                if (fl.Errors.Count == 0)
+                {
+                    layout = fl; usedPlan = fpPlan; res.Plan = fpPlan;
+                    res.Notes.Add("composer: floorplan");
+                }
+                else if (EngineTuning.FloorplanOnly)
+                {
+                    res.Layout = fl;
+                    res.Notes.Add("composer: floorplan (only, no fallback), " + fl.Errors.Count + " problem(s)");
+                    res.Errors.AddRange(fl.Errors);
+                    return res;
+                }
+                else res.Notes.Add("floorplan not used (" + fl.Errors[0] + "), falling back to the search composer");
+            }
+            if (layout == null)
+            {
+                say(0.05, "laying out rows and routing belts");
+                var composer = new Composer(gd, spec);
+                composer.TimeBudgetMs = budget > 0 ? Math.Min(budget, EngineTuning.ComposeBudgetMs) : EngineTuning.ComposeBudgetMs;
+                composer.Cancel = stop;
+                int attempts = 0;
+                composer.OnProgress = s => { attempts++; say(0.05 + 0.8 * (1 - 1.0 / (1 + attempts / 40.0)), s); };
+                layout = composer.Compose(mapped.Plan);
+                res.Notes.AddRange(composer.Notes);
+                res.Notes.Add("composer: search");
+                composerStopped = composer.Stopped;
+                if (composer.Stopped && cancel != null && cancel() && !timedOut) { res.Layout = layout; res.Errors.Add(StopText(false)); return res; }
+            }
             res.Layout = layout;
-            res.Notes.AddRange(composer.Notes);
-            if (composer.Stopped && cancel != null && cancel() && !timedOut) { res.Errors.Add(StopText(false)); return res; }
 
             say(0.86, "validating");
-            ValidationReport report = new Validator(gd, spec).Validate(layout, mapped.Plan);
+            ValidationReport report = new Validator(gd, spec).Validate(layout, usedPlan);
             res.Report = report;
             res.Warnings.AddRange(report.Warnings);
             if (!report.Ok)
             {
-                if (composer.Stopped) res.Errors.Add(StopText(timedOut) + ": no valid layout found in time");
+                if (composerStopped) res.Errors.Add(StopText(timedOut) + ": no valid layout found in time");
                 res.Errors.AddRange(report.Errors);
                 return res;
             }
@@ -202,7 +233,7 @@ public static class FlatEngine
             if (recs == null) { res.Errors.AddRange(emitErrors); return res; }
             res.Buildings = recs;
 
-            BpHeader h = Emitter.HeaderFor(layout, mapped.Plan, spec, gd, game.GameVersion);
+            BpHeader h = Emitter.HeaderFor(layout, usedPlan, spec, gd, game.GameVersion);
             if (spec.ShortDesc != null) h.ShortDesc = spec.ShortDesc;
             if (spec.Desc != null) h.Desc = spec.Desc;
             res.Header = h;

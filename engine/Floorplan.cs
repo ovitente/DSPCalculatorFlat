@@ -44,6 +44,7 @@ public static class Floorplan
         public Col Col;
         public bool Final, Absorbed;
         public bool HasRaw;                       // a block input lane (tail) belongs to this row
+        public int StraightItem;                  // input lane continued from the stacked producer below (0 = none); that lane flows N
         public List<string> Notes = new List<string>();
     }
 
@@ -52,6 +53,7 @@ public static class Floorplan
         public RI From, To; public int Item; public double Rate;
         public bool M2M;                          // absorbed feeder -> final machine (no belt)
         public bool Straight;                     // stacked or lane-aligned: the producer lane continues into the consumer lane
+        public Ed TailOf;                         // this consumer lane is fed from the dead end of that edge's consumer lane (rule 8 / 12)
     }
 
     class Col
@@ -78,13 +80,16 @@ public static class Floorplan
 
     // ------------------------------------------------------------------ entry
     /// ProductionPlan -> FpPlan (canonical frame). Never throws on plan problems: they go to FpPlan.Errors.
-    public static FpPlan Build(GameData gd, BlockSpec spec, ProductionPlan plan)
+    public static FpPlan Build(GameData gd, BlockSpec spec, ProductionPlan plan) { return Build(gd, spec, plan, null); }
+
+    /// force: row key (StepIndex * 100 + Part) -> mirror forced for that row (FloorplanComposer retries with these when the band cannot be laid).
+    public static FpPlan Build(GameData gd, BlockSpec spec, ProductionPlan plan, Dictionary<int, bool> force)
     {
         var fp = new FpPlan();
         if (plan == null || plan.Steps.Count == 0) { fp.Errors.Add("floorplan: empty production plan"); return fp; }
         if (spec == null) { fp.Errors.Add("floorplan: no block spec"); return fp; }
         if (gd == null) { fp.Errors.Add("floorplan: no game data"); return fp; }
-        var b = new Builder(gd, spec, plan, fp);
+        var b = new Builder(gd, spec, plan, fp, force);
         try { b.Run(); }
         catch (NotImplementedException) { throw; }
         catch (Exception e) { fp.Errors.Add("floorplan: " + e.GetType().Name + ": " + e.Message); }
@@ -103,10 +108,14 @@ public static class Floorplan
         FinalCell.Choice cellChoice; RI cellRow, cellDed;
         int[] faces = new int[3], dedLanes = new int[2];
         int finalIndex = -1;
+        readonly Dictionary<int, bool> force;
+        bool? ForceOf(RI r) { bool v; return force != null && force.TryGetValue(r.StepIndex * 100 + r.Part, out v) ? v : (bool?)null; }
+        readonly int quarters;   // quarter turns from the canonical frame to the real input edge (as in Composer.Attempt)
 
-        public Builder(GameData gd, BlockSpec spec, ProductionPlan plan, FpPlan fp)
+        public Builder(GameData gd, BlockSpec spec, ProductionPlan plan, FpPlan fp, Dictionary<int, bool> force)
         {
-            this.gd = gd; this.spec = spec; this.plan = plan; this.fp = fp;
+            this.gd = gd; this.spec = spec; this.plan = plan; this.fp = fp; this.force = force;
+            quarters = (((int)spec.InEdge - (int)Dir.S) % 4 + 4) % 4;
             foot = new Footprints(gd);
             double br = gd.BeltRate(spec.Tiers.Belt);
             beltRate = br > 0 ? br : double.MaxValue;
@@ -126,8 +135,58 @@ public static class Floorplan
             if (cols.Count == 0) { Err("no column could be placed"); return; }
             List<Col> order = OrderColumns();
             PlaceColumns(order);
-            Fill(order);
-            MakeConnections();
+            // a fork needs its outputs 2 tiles from the splitter (P14): columns are moved apart until no fork is too tight, then redone
+            int notes0 = fp.Notes.Count, errs0 = fp.Errors.Count;
+            for (int round = 0; ; round++)
+            {
+                Fill(order);
+                MakeConnections();
+                if (round >= 8 || fp.Errors.Count > errs0 || !Spread(order)) break;
+                fp.Columns.Clear(); fp.Rows.Clear(); fp.Connections.Clear(); fp.BandY0 = 0; fp.BandLanes = 0; fp.CombTails = 0;
+                fp.Notes.RemoveRange(notes0, fp.Notes.Count - notes0);
+            }
+        }
+
+        /// One round of column spreading: the first band fork whose consumer lanes sit closer than 2 tiles to its splitter (Bands.PlanGroup
+        /// geometry) moves the eastern of the two columns (and everything east of it) apart. False = nothing to move.
+        bool Spread(List<Col> order)
+        {
+            foreach (var g in fp.Connections.Where(c => c.Route == FpRoute.Band && c.TailOf == null).GroupBy(c => c.Source))
+            {
+                var ts = g.OrderBy(c => Math.Abs(c.Target.PrevX - g.Key.NextX)).ToList();
+                if (ts.Count < 2) continue;
+                int sx = g.Key.NextX, x1 = ts[0].Target.PrevX, x2 = ts[1].Target.PrevX;
+                bool same = Math.Sign(x1 - sx) == Math.Sign(x2 - sx) && x1 != sx;
+                int a, b, need;
+                if (same && Math.Abs(x1 - sx) < 2) { a = sx; b = x1; need = 2; }
+                else if (same && Math.Abs(x2 - x1) < 2) { a = x1; b = x2; need = 2; }
+                else if (!same && Math.Abs(x1 - sx) < 2) { a = sx; b = x1; need = 2; }
+                else if (!same && Math.Abs(x2 - sx) < 2) { a = sx; b = x2; need = 2; }
+                else
+                {
+                    // no foreign vertical next to the splitter column (the splitter keeps 2 tiles from foreign belts, P14; useredit3 keeps it)
+                    int fx = same ? x1 : sx;
+                    int other = int.MinValue;
+                    foreach (FpConnection o in fp.Connections.Where(c => c.Route == FpRoute.Band && c.Item != ts[0].Item))
+                    {
+                        if (Math.Abs(o.Source.NextX - fx) == 1) other = o.Source.NextX;
+                        else if (o.TailOf == null && Math.Abs(o.Target.PrevX - fx) == 1) other = o.Target.PrevX;
+                        if (other != int.MinValue) break;
+                    }
+                    if (other == int.MinValue) continue;
+                    a = fx; b = other; need = 2;
+                }
+                int delta = need - Math.Abs(a - b);
+                int ka = order.FindIndex(c => c.Box.X0 <= a && a <= c.Box.X1), kb = order.FindIndex(c => c.Box.X0 <= b && b <= c.Box.X1);
+                int boundary = Math.Max(ka, kb);
+                // the rule-5 feeder column stays aligned with the final cell; two lanes of one column cannot be moved apart
+                if (ka == kb || ka < 0 || kb < 0 || boundary < 1 || (order[0].Final && boundary == 1 && Aligned(order[0], order[1]))) continue;
+                order[boundary - 1].GapAfter += delta;
+                for (int k = boundary; k < order.Count; k++) Translate(order[k], delta, 0);
+                Note("gap: " + delta + " tile(s) east of column " + (boundary - 1) + " for the fork of " + N(ts[0].Item) + " (P14: outputs turn 2 tiles after the splitter)");
+                return true;
+            }
+            return false;
         }
 
         // ---------------------------------------------------------------- 1. rows
@@ -256,16 +315,30 @@ public static class Floorplan
             own = own.OrderBy(it => { Step p = plan.StepFor(it); return p != null && !f.Step.IsExternal(plan, it) && p.ConsumerSteps.Distinct().Count() == 1 && p.ConsumerSteps[0] == finalIndex ? 0 : 1; })
                      .ThenByDescending(it => f.InRates[Array.IndexOf(f.InItems, it)]).ToList();
             for (int i = 0; i < own.Count && i < 3; i++) faces[i] = own[i];
+            // rule 11: the dedicated machine's lane shared with the rule-5 feeder (useredit3: iron ingot, steel's input) takes the
+            // E lane end: it arrives as the tail of that feeder's lane, under the feeder column (useredit3 x=9 -> (4,5))
+            if (faces[0] != 0 && ded.Count == 2)
+            {
+                Step feeder = plan.StepFor(faces[0]);
+                if (feeder != null && feeder.Inputs.Any(x => x.Item == ded[0]) && !feeder.Inputs.Any(x => x.Item == ded[1])) { int t = ded[0]; ded[0] = ded[1]; ded[1] = t; }
+            }
             for (int i = 0; i < ded.Count && i < 2; i++) dedLanes[i] = ded[i];
             Note(FinalCell.Note(c, gd));
             Note("final cell faces: E " + (faces[0] != 0 ? N(faces[0]) : "-") + " (rule 5 when its producer feeds only the final machine), W " + (faces[1] != 0 ? N(faces[1]) : "-") + ", N " + (faces[2] != 0 ? N(faces[2]) : "-")
-                + (d != null ? "; S machine " + d.Step.Recipe.Name + " with lane ends W " + (dedLanes[0] != 0 ? N(dedLanes[0]) : "-") + " / E " + (dedLanes[1] != 0 ? N(dedLanes[1]) : "-") + " (rule 11; W/E order = per-craft order, not derived from the oracle)" : ""));
+                + (d != null ? "; S machine " + d.Step.Recipe.Name + " with lane ends W " + (dedLanes[0] != 0 ? N(dedLanes[0]) : "-") + " / E " + (dedLanes[1] != 0 ? N(dedLanes[1]) : "-") + " (rule 11; the lane shared with the rule-5 feeder is the E one, useredit3)" : ""));
         }
 
         // ---------------------------------------------------------------- row fragments
-        Fragment BuildRow(RI r, bool mirror)
+        /// Row fragment. straightItem = the lane continued from a stacked producer (flows N); every other lane fed inside the
+        /// block comes from the north band and flows S (docs\floorplan-design.md item 5); block inputs keep a N tail. A
+        /// coated lane stays N (spray coaters are not supported on reversed lanes).
+        Fragment BuildRow(RI r, bool mirror, int straightItem)
         {
             if (r.Final) return BuildFinal(r);
+            bool coat = Coaters.Coated(r.Step) && spec.ProliferatorItem != 0;
+            var flows = new Dir?[r.InItems.Length];
+            for (int i = 0; i < flows.Length; i++)
+                flows[i] = !coat && !r.Step.IsExternal(plan, r.InItems[i]) && r.InItems[i] != straightItem ? Dir.S : Dir.N;
             var rs = new RowSpec
             {
                 Name = r.Name, MachineItem = r.Step.MachineItem, RecipeId = r.Step.Recipe.Id, Count = r.Count, Pitch = 0,
@@ -275,10 +348,11 @@ public static class Floorplan
                 LaneIcons = false,
                 TailItems = r.InItems.Where(it => r.Step.IsExternal(plan, it)).ToArray(),
                 Data = gd,
-                FinalQuarters = 0, AlongEW = false, Safe60 = spec.Safe60,
+                FinalQuarters = quarters, AlongEW = quarters % 2 != 0, Safe60 = spec.Safe60,
                 LabStackMax = spec.LabStackMax,
                 CoatItems = Coaters.Coated(r.Step) && spec.ProliferatorItem != 0 ? (int[])r.InItems.Clone() : null,
-                ProliferatorItem = spec.ProliferatorItem
+                ProliferatorItem = spec.ProliferatorItem,
+                InputFlows = flows, OutputFlow = Dir.N
             };
             Fragment f;
             try
@@ -351,48 +425,60 @@ public static class Floorplan
             {
                 if (r.Absorbed) continue;
                 // candidate producers: already placed, top of their column, feeding exactly this row and nothing else
-                Ed best = null;
                 bool stackable = !r.HasRaw && !r.Final && !(Coaters.Coated(r.Step) && spec.ProliferatorItem != 0);
+                bool stacked = false;
                 if (stackable)
-                    foreach (Ed e in edges.Where(e => e.To == r && e.From != null && !e.M2M))
-                    {
-                        RI p = e.From;
-                        if (p.Frag == null || p.Col == null || p.Col.Top != p || p.Final) continue;
-                        if (edges.Count(x => x.From == p && !x.M2M) != 1) continue;
-                        if (best == null || e.Rate > best.Rate + 1e-9 || (Math.Abs(e.Rate - best.Rate) <= 1e-9 && p.StepIndex < best.From.StepIndex)) best = e;
-                    }
-                if (best != null)
                 {
-                    RI p = best.From; Col c = p.Col;
-                    Port src = FindPort(p.Frag, "out:" + p.Step.Item);
-                    Fragment pick = null; int pickDx = 0, pickScore = int.MaxValue; bool pickMirror = false;
-                    foreach (bool mirror in new[] { false, true })
+                    var cands = edges.Where(e => e.To == r && e.From != null && !e.M2M
+                                              && e.From.Frag != null && e.From.Col != null && e.From.Col.Top == e.From && !e.From.Final
+                                              && edges.Count(x => x.From == e.From && !x.M2M) == 1)
+                                     .OrderByDescending(e => e.Rate).ThenBy(e => e.From.StepIndex).ToList();
+                    foreach (Ed cand in cands)
                     {
-                        Fragment f = BuildRow(r, mirror);
-                        if (f == null) continue;
-                        Port ip = FindPort(f, "in:" + best.Item);
-                        if (ip == null || ip.Dir != src.Dir) continue;
-                        int dx = src.X - ip.X;
-                        // the narrower column wins (rule 1 pitch), then the smaller shift
-                        Rect fb = f.Bounds(foot);
-                        int score = (Math.Max(c.Box.X1, fb.X1 + dx) - Math.Min(c.Box.X0, fb.X0 + dx) + 1) * 8 + Math.Abs(dx);
-                        if (score < pickScore) { pick = f; pickDx = dx; pickScore = score; pickMirror = mirror; }
-                    }
-                    if (pick != null)
-                    {
+                        RI p = cand.From; Col c = p.Col;
+                        Fragment pick = null; int pickDx = 0, pickScore = int.MaxValue; bool pickMirror = false; List<Ed[]> pickTails = null; Fragment pickProd = null;
+                        // a producer alone in its column may be rebuilt mirrored so that its output lane and band-fed lanes line up with the consumer
+                        foreach (bool pMirror in c.Rows.Count == 1 && !ForceOf(p).HasValue ? new[] { false, true } : new[] { false })
+                        foreach (bool mirror in ForceOf(r).HasValue ? new[] { ForceOf(r).Value } : new[] { false, true })
+                        {
+                            Fragment prod = pMirror ? BuildRow(p, true, p.StraightItem) : p.Frag;
+                            if (prod == null) continue;
+                            if (pMirror) { Rect pr = prod.Bounds(foot); prod.Translate(-pr.X0, -pr.Y0); }
+                            Port src = FindPort(prod, "out:" + p.Step.Item);
+                            Fragment f = BuildRow(r, mirror, cand.Item);
+                            if (f == null) continue;
+                            Port ip = FindPort(f, "in:" + cand.Item);
+                            if (ip == null || ip.Dir != src.Dir) continue;
+                            int dx = src.X - ip.X;
+                            List<Ed[]> tails;
+                            if (!TailsAlign(p, r, prod, f, dx, out tails)) continue;
+                            // the narrower column wins (rule 1 pitch), then the smaller shift
+                            Rect fb = f.Bounds(foot), cb = pMirror ? prod.Bounds(foot) : c.Box;
+                            int score = (Math.Max(cb.X1, fb.X1 + dx) - Math.Min(cb.X0, fb.X0 + dx) + 1) * 8 + Math.Abs(dx) + (ProductLaneInside(r, f) ? 1000 : 0);
+                            if (score < pickScore) { pick = f; pickDx = dx; pickScore = score; pickMirror = mirror; pickTails = tails; pickProd = pMirror ? prod : null; }
+                        }
+                        if (pick == null) { Note("stack: " + r.Name + " could not be aligned on " + p.Name + " (lanes), own column unless another producer fits"); continue; }
+                        if (pickProd != null) { p.Frag = pickProd; c.Box = pickProd.Bounds(foot); }
                         Rect pb = pick.Bounds(foot);
                         pick.Translate(pickDx, c.Box.Y1 + 1 - pb.Y0);
                         int widened = 0;
                         for (int guard = 0; guard < 4 && MachinesCollide(pick, p.Frag); guard++) { pick.Translate(0, 1); widened++; }
-                        r.Frag = pick; r.Col = c;
+                        r.Frag = pick; r.Col = c; r.StraightItem = cand.Item;
                         c.Rows.Add(r); c.Box = c.Box.Union(pick.Bounds(foot));
-                        best.Straight = true;
-                        Note("stack: " + r.Name + " on " + p.Name + " (" + N(best.Item) + " " + F(best.Rate) + "/min, only consumer of that row; lane dx " + pickDx + (pickMirror ? ", mirrored" : "") + (widened > 0 ? ", gap " + widened + " for the machine colliders" : ", flush") + ")");
-                        continue;
+                        cand.Straight = true;
+                        foreach (Ed[] t in pickTails) t[1].TailOf = t[0];
+                        Note("stack: " + r.Name + " on " + p.Name + " (" + N(cand.Item) + " " + F(cand.Rate) + "/min, only consumer of that row; lane dx " + pickDx + (pickMirror ? ", mirrored" : "") + (widened > 0 ? ", gap " + widened + " for the machine colliders" : ", flush") + (pickTails.Count > 0 ? ", " + pickTails.Count + " band lane(s) continue from this row's lane tail" : "") + ")");
+                        stacked = true;
+                        break;
                     }
-                    Note("stack: " + r.Name + " could not be aligned on " + p.Name + ", own column");
                 }
-                Fragment g = BuildRow(r, false);
+                if (stacked) continue;
+                Fragment g = BuildRow(r, ForceOf(r) ?? false, 0);
+                if (g != null && !ForceOf(r).HasValue && ProductLaneInside(r, g))
+                {
+                    Fragment gm = BuildRow(r, true, 0);
+                    if (gm != null && !ProductLaneInside(r, gm)) g = gm;
+                }
                 if (g == null) continue;
                 Rect gb = g.Bounds(foot);
                 g.Translate(-gb.X0, -gb.Y0);
@@ -403,6 +489,34 @@ public static class Floorplan
             }
             if (cellDed != null && cellRow.Frag != null) { cellDed.Frag = cellRow.Frag; cellDed.Col = cellRow.Col; }
             foreach (RI r in rows) if (r.Frag == null && !r.Absorbed) Err("row " + r.Name + " has no fragment");
+        }
+
+        /// The target row's product lane rises through every band row: it must be the row's westmost lane (the target column is the
+        /// west one and the band comes from the east), otherwise the band would have to bridge it right next to a consumer lane's corner.
+        bool ProductLaneInside(RI r, Fragment f)
+        {
+            if (r.Step.Item != plan.TargetItem || r.Final) return false;
+            Port o = FindPort(f, "out:" + r.Step.Item);
+            return o != null && f.Ports.Any(p => p.Kind == PortKind.In && p.X < o.X);
+        }
+
+        /// A producer row stacked under its consumer cannot be reached from the band (the consumer row is above it): every band-fed
+        /// lane (S flow) of the producer must continue from the same item's S lane of the consumer, aligned in x (rule 8 / 12,
+        /// useredit3 gear: the iron ingot lane x=15 passes the motors and ends at the gear). tails: {consumer edge, producer edge}.
+        bool TailsAlign(RI p, RI r, Fragment prod, Fragment f, int dx, out List<Ed[]> tails)
+        {
+            tails = new List<Ed[]>();
+            foreach (Port q in prod.Ports.Where(x => x.Kind == PortKind.In && x.Dir == Dir.S))
+            {
+                Port up = FindPort(f, "in:" + q.Item);
+                if (up == null || up.Dir != Dir.S || up.X + dx != q.X) return false;
+                var ep = edges.Where(e => e.To == p && e.Item == q.Item).ToList();
+                var er = edges.Where(e => e.To == r && e.Item == q.Item).ToList();
+                if (ep.Count != 1 || er.Count != 1 || ep[0].From == null || ep[0].From != er[0].From) return false;
+                if (ep[0].Rate + er[0].Rate > beltRate + 1e-9) return false;
+                tails.Add(new[] { er[0], ep[0] });
+            }
+            return true;
         }
 
         // ---------------------------------------------------------------- 3. column order
@@ -466,6 +580,38 @@ public static class Floorplan
         /// The column whose top row feeds the final cell's E face and nothing else (rule 5 lane alignment candidate).
         bool Aligned(Col fin, Col c) { return fin != null && c != fin && faces[0] != 0 && c.Top.Step.Item == faces[0] && WholeOutputToFinal(c); }
 
+        /// The output lane's last tile an output sorter drops on (null = cannot tell).
+        Bld LastDrop(Fragment f, Port src)
+        {
+            Bld best = null;
+            var lane = new HashSet<Bld>();
+            for (Bld b = src.Belt; b != null; b = PredOf(f, b)) lane.Add(b);
+            foreach (Bld s in f.Blds.Where(b => b.Kind == Kind.Sorter && b.Output != null && lane.Contains(b.Output)))
+                if (best == null || s.Output.TileY > best.TileY) best = s.Output;
+            return best;
+        }
+
+        static Bld PredOf(Fragment f, Bld b) { foreach (Bld o in f.Blds) if (o.Kind == Kind.Belt && o.Output == b) return o; return null; }
+
+        /// Rule 5 merge: removes the output lane's tiles at and above the last drop tile; the drop sorters then deliver onto the
+        /// cell's E lane-end belt and the lane's new last tile links into it (Straight connection, direct port link).
+        void TrimToDrop(RI r, Port src, Bld drop, Port tgt)
+        {
+            Fragment f = r.Frag;
+            var cut = new List<Bld>();
+            for (Bld b = src.Belt; b != null && b.TileY >= drop.TileY; b = PredOf(f, b)) cut.Add(b);
+            Bld last = PredOf(f, drop);
+            foreach (Bld s in f.Blds.Where(b => b.Kind == Kind.Sorter && b.Output == drop)) s.Output = tgt.Belt;
+            foreach (Bld b in cut) f.Blds.Remove(b);
+            if (last == null) { Err("rule 5: the feeder lane of " + r.Name + " has only its drop tile"); return; }
+            Layout.Link(last, null, 0);
+            src.Belt = last; src.Y = last.TileY;
+            // the lane no longer reaches the row's top line: the column box shrinks
+            Col c = r.Col;
+            c.Box = Rect.Empty;
+            foreach (RI q in c.Rows) c.Box = c.Box.Union(q.Frag.Bounds(foot));
+        }
+
         void PlaceColumns(List<Col> order)
         {
             int cursor = 0;
@@ -490,9 +636,13 @@ public static class Floorplan
                     // rule 5: the E-face feeder's output lane continues straight into the cell's E lane end (useredit3 steel x=5 -> (5,13))
                     Port tgt = FindPort(fin.Top.Frag, "in:" + faces[0]);
                     Port src = FindPort(c.Top.Frag, "out:" + c.Top.Step.Item);
+                    Bld dropBelt = src != null && tgt != null ? LastDrop(c.Top.Frag, src) : null;
                     if (tgt != null && src != null && src.Dir == tgt.Dir)
                     {
-                        int dx = tgt.X - src.NextX, dy = tgt.Y - src.NextY;
+                        // useredit3 (5,13): the feeder's last drop tile IS the cell's E lane end. Move the row so that this tile lands
+                        // on the port and trim the lane there: the row sits higher and leaves the row under it free for the rule-11 lane
+                        int dx = tgt.X - src.NextX, dy = dropBelt != null ? tgt.Y - dropBelt.TileY : tgt.Y - src.NextY;
+                        if (dropBelt != null) TrimToDrop(c.Top, src, dropBelt, tgt);
                         Translate(c, dx, dy);
                         bool clear = true;
                         foreach (RI r in c.Rows) foreach (Bld b in r.Frag.Blds) { Rect tr = foot.TileRect(b); if (tr.IsEmpty) continue; if (!finGrid.IsFree(tr)) { clear = false; break; } }
@@ -506,6 +656,7 @@ public static class Floorplan
                         else
                         {
                             Translate(c, -dx, -dy);
+                            if (dropBelt != null) Err("rule 5: the trimmed feeder lane of " + c.Top.Name + " does not fit the final cell (machine / depot clash)");
                             Note("column " + N(c.Top.Step.Item) + ": lane alignment with the final cell's E face collides, placed adjacent with a band link instead");
                         }
                     }
@@ -561,6 +712,7 @@ public static class Floorplan
         void MakeConnections()
         {
             var conns = new List<FpConnection>();
+            var connOf = new Dictionary<Ed, FpConnection>();
             foreach (Ed e in edges)
             {
                 if (e.To == null || e.To.Row == null) continue;
@@ -580,11 +732,20 @@ public static class Floorplan
                     if (c.Source == null) { Err("no port out:" + e.Item + " on " + e.From.Name); continue; }
                     bool straight = e.Straight && c.Source.X == c.Target.X && c.Source.Dir == c.Target.Dir && c.Target.Y > c.Source.Y;
                     c.Route = straight ? FpRoute.Straight : FpRoute.Band;
-                    c.TargetFlow = e.To.Final || e.To.Absorbed ? c.Target.Dir : (straight ? Dir.N : Dir.S);
+                    c.TargetFlow = c.Target.Dir;
                     if (straight) c.Slot = 0;
                 }
                 conns.Add(c);
+                connOf[e] = c;
             }
+            foreach (Ed e in edges) if (e.TailOf != null && connOf.ContainsKey(e) && connOf.ContainsKey(e.TailOf)) connOf[e].TailOf = connOf[e.TailOf];
+            // rule 11 / 12: the dedicated machine's lane end shared with the rule-5 feeder comes from the end of that feeder's input lane
+            if (cellDed != null)
+                foreach (FpConnection k in conns.Where(k => k.Route == FpRoute.Band && k.To != null && k.To.Absorbed && k.TailOf == null))
+                {
+                    FpConnection host = conns.FirstOrDefault(o => o != k && o.Route == FpRoute.Band && o.Item == k.Item && o.Source == k.Source && o.TailOf == null && o.Target != null && o.Target.Dir == Dir.S && o.To.Column != null && o.To.Column.Index == 1 && !o.To.FinalCell);
+                    if (host != null) { k.TailOf = host; Note("rule 12: " + N(k.Item) + " to the dedicated machine continues from the lane end of " + host.To.Name); }
+                }
             // band: one lane per item; an item whose span is enclosed by another's gets the lower lane (fewer crossings)
             var band = conns.Where(c => c.Route == FpRoute.Band).ToList();
             var span = new Dictionary<int, int[]>();
@@ -593,17 +754,70 @@ public static class Floorplan
                 int[] s; if (!span.TryGetValue(c.Item, out s)) { s = new[] { int.MaxValue, int.MinValue }; span[c.Item] = s; }
                 s[0] = Math.Min(s[0], Math.Min(c.Source.X, c.Target.X)); s[1] = Math.Max(s[1], Math.Max(c.Source.X, c.Target.X));
             }
-            // narrow spans first (enclosed -> lower); two items whose spans leave at least one free tile between them share a row
+            // a band row cannot bridge a vertical lane one tile from its own corner (ramp foot on a corner, P13): when item j's vertical
+            // stands next to one of item i's ends inside i's span, i must run ABOVE j (then j's vertical stops below i's row).
+            var ends = new Dictionary<int, HashSet<int>>();
+            foreach (int it in span.Keys)
+            {
+                var set = new HashSet<int>();
+                foreach (FpConnection c in band.Where(c => c.Item == it))
+                {
+                    set.Add(c.Source.NextX);
+                    if (c.TailOf == null) set.Add(c.Target.PrevX);
+                }
+                ends[it] = set;
+            }
+            var mustAbove = new Dictionary<int, HashSet<int>>();
+            foreach (int it in span.Keys)
+            {
+                var a = new HashSet<int>();
+                foreach (int j in span.Keys)
+                    if (j != it && ends[j].Any(x => x >= span[it][0] && x <= span[it][1] && ends[it].Any(e => Math.Abs(e - x) == 1))) a.Add(j);
+                mustAbove[it] = a;
+            }
+            // forks (Bands.PlanGroup: same side = splitter over the nearer consumer lane, else on top of the rise): no foreign belt within
+            // 2 tiles of the splitter (P14) and the tiles under it are not bridgeable. An item crossing the fork column runs above the fork's
+            // row (then the fork's descent stops below it); a vertical next to the fork column stays below it; both with one free row between.
+            var forkX = new Dictionary<int, HashSet<int>>();
+            foreach (var g in band.Where(c => c.TailOf == null).GroupBy(c => c.Source))
+            {
+                var ts = g.OrderBy(c => Math.Abs(c.Target.PrevX - g.Key.NextX)).ToList();
+                if (ts.Count < 2) continue;
+                int sx = g.Key.NextX, x1 = ts[0].Target.PrevX, x2 = ts[1].Target.PrevX;
+                bool same = Math.Sign(x1 - sx) == Math.Sign(x2 - sx) && x1 != sx;
+                if (!forkX.ContainsKey(ts[0].Item)) forkX[ts[0].Item] = new HashSet<int>();
+                forkX[ts[0].Item].Add(same ? x1 : sx);
+            }
+            var threeWay = new HashSet<int>(band.Where(c => c.TailOf == null).GroupBy(c => c.Source)
+                .Where(g => g.Count() == 3 && g.Any(c => c.Target.PrevX < g.Key.NextX) && g.Any(c => c.Target.PrevX > g.Key.NextX)).Select(g => g.Key.Item));
+            var guarded = new HashSet<long>();   // (a,b): a above b with one free row between
+            foreach (int f in forkX.Keys)
+                foreach (int fx in forkX[f])
+                    foreach (int j in span.Keys.Where(j => j != f))
+                    {
+                        if (ends[j].Contains(fx - 1) || ends[j].Contains(fx + 1)) { mustAbove[f].Add(j); guarded.Add(((long)f << 32) | (uint)j); }
+                        else if (fx >= span[j][0] && fx <= span[j][1] && !ends[j].Contains(fx)) { mustAbove[j].Add(f); guarded.Add(((long)j << 32) | (uint)f); }
+                    }
+            // topological by mustAbove, ties: narrow spans first (enclosed -> lower); two items whose spans leave at least one free tile
+            // between them share a row
             var laneOf = new Dictionary<int, int>();
             var laneSpans = new List<List<int[]>>();
-            foreach (int it in span.Keys.OrderBy(it => span[it][1] - span[it][0]).ThenBy(it => span[it][0]).ThenBy(it => it))
+            var remaining = span.Keys.OrderBy(it => span[it][1] - span[it][0]).ThenBy(it => span[it][0]).ThenBy(it => it).ToList();
+            while (remaining.Count > 0)
             {
+                int it = remaining.FirstOrDefault(i => mustAbove[i].All(j => !remaining.Contains(j) || j == i));
+                if (it == 0) { it = remaining[0]; Note("band: lane order constraints for " + N(it) + " form a cycle (a crossing next to a corner may be refused)"); }
+                remaining.Remove(it);
                 int[] s = span[it];
+                int minLane = mustAbove[it].Where(j => laneOf.ContainsKey(j)).Select(j => laneOf[j] + (guarded.Contains(((long)it << 32) | (uint)j) ? 2 : 1)).DefaultIfEmpty(0).Max();
+                int rows = threeWay.Contains(it) ? 3 : 1;   // a 3-way fork takes this row and the two above it (branch N, row yb + 2)
+                Func<int, bool> free = l => l < laneSpans.Count && laneSpans[l].All(o => o[1] + 2 <= s[0] || s[1] + 2 <= o[0]);
                 int lane = -1;
-                for (int l = 0; l < laneSpans.Count && lane < 0; l++)
-                    if (laneSpans[l].All(o => o[1] + 2 <= s[0] || s[1] + 2 <= o[0])) lane = l;
-                if (lane < 0) { lane = laneSpans.Count; laneSpans.Add(new List<int[]>()); }
-                laneSpans[lane].Add(s);
+                for (int l = minLane; lane < 0 && l < laneSpans.Count; l++)
+                    if (Enumerable.Range(l, rows).All(q => q >= laneSpans.Count || free(q))) lane = l;
+                if (lane < 0) lane = Math.Max(laneSpans.Count, minLane);
+                while (laneSpans.Count < lane + rows) laneSpans.Add(new List<int[]>());
+                for (int q = 0; q < rows; q++) laneSpans[lane + q].Add(s);
                 laneOf[it] = lane;
             }
             var sources = new List<Port>();
@@ -615,6 +829,15 @@ public static class Floorplan
                 c.Group = g;
             }
             fp.BandLanes = laneSpans.Count;
+            // the band row must leave room for every consumer: one descent tile above a S lane's port, two when the fork's splitter sits
+            // over that lane (its S port belt fills the first row below the band); E / W lane ends are entered from their own row
+            foreach (FpConnection c in band.Where(c => c.TailOf == null))
+            {
+                bool fork = band.Count(o => o.Source == c.Source && o.TailOf == null) > 1;
+                int need = c.Target.Dir == Dir.S ? c.Target.Y + (fork ? 3 : 2) : c.Target.Y + 1;
+                if (fork) need = Math.Max(need, c.Source.NextY + 2);   // a splitter on top of the rise: its input belts need the two rows below it
+                fp.BandY0 = Math.Max(fp.BandY0, need - laneOf[c.Item]);
+            }
             foreach (int it in laneOf.Keys.OrderBy(it => laneOf[it]).ThenBy(it => span[it][0]))
             {
                 var tg = band.Where(c => c.Item == it).Select(c => c.To.Name).Distinct().ToArray();
@@ -633,18 +856,17 @@ public static class Floorplan
             foreach (var grp in comb.GroupBy(c => c.To.Column).OrderBy(g => g.Key.X0))
             {
                 var lanes = grp.OrderBy(c => c.Target.X).ToList();
-                int x0 = lanes[0].Target.X;
+                // P12: tails adjacent, the lanes fan out along the edge (the lane whose tail is not under it turns along the edge);
+                // a final-cell lane end flowing E / W is entered from its upstream column
+                int x0 = lanes[0].Target.PrevX;
                 if (lanes.Count > 1)
-                {
-                    // P12: tails adjacent, the lanes fan out along the edge (the lane whose tail is not under it turns along the edge)
                     foreach (FpConnection c in lanes) { if (c.Target.Dir == Dir.N) { x0 = c.Target.X; break; } }
-                }
                 int x = x0;
                 foreach (FpConnection c in lanes)
                 {
                     while (usedX.Contains(x)) x++;
                     c.Slot = x; usedX.Add(x);
-                    if (c.Slot != c.Target.X || c.Target.Dir != Dir.N) Note("comb tail x" + c.Slot + " (" + N(c.Item) + " -> " + c.To.Name + "): lane at x" + c.Target.X + " flowing " + c.Target.Dir + ", the lane turns along the south edge (P12)");
+                    if (c.Slot != c.Target.PrevX || c.Target.Dir != Dir.N) Note("comb tail x" + c.Slot + " (" + N(c.Item) + " -> " + c.To.Name + "): lane at x" + c.Target.X + " flowing " + c.Target.Dir + ", the lane turns along the south edge (P12)");
                     x++;
                 }
             }

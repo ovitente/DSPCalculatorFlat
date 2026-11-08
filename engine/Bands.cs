@@ -408,8 +408,8 @@ public static class Bands
             Port t = c.Target;
             if (t.Belt == null) { errors.Add("bands: " + Who(c) + ": target port has no belt"); return; }
             if (c.Slot < 0) { errors.Add("bands: " + Who(c) + ": comb slot not assigned"); return; }
-            if (t.Dir != Dir.N) { errors.Add("bands: " + Who(c) + ": comb lane into a port flowing " + t.Dir + " is not supported (south comb feeds lanes flowing N)"); return; }
-            int x0 = c.Slot, y0 = fp.CombY, tx = t.X, ty1 = t.PrevY;
+            if (t.Dir == Dir.S) { errors.Add("bands: " + Who(c) + ": comb lane into a port flowing S is not supported (south comb feeds lanes flowing N, E or W)"); return; }
+            int x0 = c.Slot, y0 = fp.CombY, tx = t.PrevX, ty1 = t.PrevY;   // FLOORPLAN: E / W ports (final cell lane ends) are entered from their upstream tile
             if (ty1 < y0) { errors.Add("bands: " + Who(c) + ": target port " + At(t.X, t.Y) + " lies below the comb row y" + y0); return; }
             string chain = ChainName("comb", c.Item);
             var plans = new List<Plan>();
@@ -448,6 +448,9 @@ public static class Bands
 
         public void LayBands(List<FpConnection> bands, List<string> errors)
         {
+            // lane-tail consumers (FpConnection.TailOf) are laid after the groups, from the dead end of their host's lane
+            var tails = bands.Where(c => c.TailOf != null).ToList();
+            bands = bands.Where(c => c.TailOf == null).ToList();
             // groups: connections sharing a source port = forks; connections sharing a target port = merges (first = primary)
             var groups = new List<Group>();
             var merges = new List<FpConnection>();
@@ -510,6 +513,18 @@ public static class Bands
                 if (!prim.Laid) { Unlay(mergeRise[m].Belts, mergeRise[m].LinkFrom); errors.Add("bands: " + Who(m) + ": the primary run " + prim + " was not laid, merge dropped"); continue; }
                 LayMerge(m, mergeRise[m], prim, pg, geo[pg], errors);
             }
+            // phase 4: lane-tail consumers, each after its host (a chain of tails is laid front to back)
+            for (bool progress = true; progress && tails.Count > 0; )
+            {
+                progress = false;
+                foreach (FpConnection c in tails.Where(c => c.TailOf.Laid).ToList())
+                {
+                    LayFromTail(c, c.TailOf, c.TailOf.Chain ?? ChainName("band", c.Item), errors);
+                    tails.Remove(c);
+                    progress = true;
+                }
+            }
+            foreach (FpConnection c in tails) errors.Add("bands: " + Who(c) + ": its host lane " + c.TailOf + " was not laid");
         }
 
         sealed class TargetGeo
@@ -531,6 +546,7 @@ public static class Bands
             public List<TargetGeo> Targets = new List<TargetGeo>();
             public bool Fork;                    // 2-way splitter
             public int Fx;                       // splitter x on the band row
+            public bool ThreeWay;                // 3 consumers on both sides: splitter at (sx, yb) with outputs W, E and N, the N branch runs on the row yb + 2 (useredit3 copper (28,17))
             public bool SplitOnRise;             // splitter at (sx, yb), input from S, outputs W and E
             public Dir SplitIn;                  // input side of the splitter (W / E / S)
         }
@@ -561,7 +577,20 @@ public static class Bands
                 why = "no free column beside the lane for a descent into the port " + At(t.X, t.Y) + " flowing N";
                 return null;
             }
-            why = "target port " + At(t.X, t.Y) + " flows " + t.Dir + " (band enters from the north: S or N expected)";
+            // FLOORPLAN: a port flowing E / W (final cell N-face lane, rule-11 lane ends): descend into its upstream tile, in the first
+            // free column going away from it (useredit3: N-face lane x=5 down to (5,14); copper x=0 down to (0,5) then east)
+            int step = t.Dir == Dir.W ? 1 : -1;
+            for (int k = 0; k <= 6; k++)
+            {
+                int x = t.PrevX + step * k;
+                bool free = true;
+                for (int y = t.PrevY; y <= yTop && free; y++) free = work.Grid.IsFree(x, y);
+                for (int q = 1; q <= k && free; q++) free = work.Grid.IsFree(t.PrevX + step * (q - 1), t.PrevY);
+                if (!free) continue;
+                xd = x;
+                return Path(x, yTop, x, t.PrevY, t.PrevX, t.PrevY);
+            }
+            why = "no free column to descend into the port " + At(t.X, t.Y) + " flowing " + t.Dir;
             return null;
         }
 
@@ -584,7 +613,21 @@ public static class Bands
                 if (tg.Descent == null) { err = why; return null; }
                 gg.Targets.Add(tg);
             }
-            if (n >= 2)
+            if (n == 3 && gg.Targets.Any(t => t.Xd < gg.Sx) && gg.Targets.Any(t => t.Xd > gg.Sx))
+            {
+                // useredit3 copper (28,17): 3 outputs on top of the rise; W and E go to the nearest consumer of each side, the N branch rises two
+                // rows and takes the third (Bands reserves the rows yb + 1, yb + 2: Floorplan keeps them free)
+                TargetGeo w = gg.Targets.Where(t => t.Xd < gg.Sx).OrderBy(t => gg.Sx - t.Xd).First(), e = gg.Targets.Where(t => t.Xd > gg.Sx).OrderBy(t => t.Xd - gg.Sx).First();
+                TargetGeo far = gg.Targets.First(t => t != w && t != e);
+                gg.Targets = new List<TargetGeo> { w, e, far };
+                if (gg.Sx - w.Xd < 2 || e.Xd - gg.Sx < 2) { err = "3-way fork: a consumer column is less than 2 tiles from the splitter x" + gg.Sx; return null; }
+                string why; int xd;
+                far.Descent = DescentTiles(far.Conn.Target, gg.Yb + 1, out xd, out why);
+                if (far.Descent == null) { err = "3-way fork: " + why; return null; }
+                far.Xd = xd;
+                gg.Fork = true; gg.ThreeWay = true; gg.SplitOnRise = true; gg.Fx = gg.Sx; gg.SplitIn = Dir.S;
+            }
+            else if (n >= 2)
             {
                 gg.Fork = true;
                 TargetGeo t1 = gg.Targets[0], t2 = gg.Targets[1];
@@ -677,7 +720,7 @@ public static class Bands
             string clear = SplitterClear(gg.Fx, yb, all);
             if (clear != null) { fail("bands: " + Who(t1.Conn) + ": splitter at " + At(gg.Fx, yb) + ": " + clear); return; }
             Fragment sf;
-            try { sf = Modules.Splitter(gg.Fx, yb, gg.SplitIn, new[] { out1, out2 }, beltItem, g.Item, false); }
+            try { sf = Modules.Splitter(gg.Fx, yb, gg.SplitIn, gg.ThreeWay ? new[] { out1, out2, Dir.N } : new[] { out1, out2 }, beltItem, g.Item, false); }
             catch (Exception ex) { fail("bands: " + Who(t1.Conn) + ": Modules.Splitter: " + ex.Message); return; }
             int errs0 = work.Errors.Count;
             work.Add(sf);
@@ -738,7 +781,21 @@ public static class Bands
             t1.Conn.Splitter = splitter; t2.Conn.Splitter = splitter;
             Record(t1.Conn, chain, Order(c1), "band y" + yb + " via splitter " + At(gg.Fx, yb) + " out " + out1);
             Record(t2.Conn, chain, Order(c2), "band y" + yb + " via splitter " + At(gg.Fx, yb) + " out " + out2);
-            fp.Notes.Add("bands: splitter " + At(gg.Fx, yb) + " in " + gg.SplitIn + " outs " + out1 + "/" + out2 + " for item " + g.Item);
+            fp.Notes.Add("bands: splitter " + At(gg.Fx, yb) + " in " + gg.SplitIn + " outs " + out1 + "/" + out2 + (gg.ThreeWay ? "/N" : "") + " for item " + g.Item);
+            if (gg.ThreeWay)
+            {
+                // N output -> row yb + 2 -> the third consumer's descent
+                TargetGeo t3 = gg.Targets[2];
+                Port po3 = sf.Port("out:" + Dir.N);
+                string why3; Plan used3;
+                var p3 = new Plan { Tiles = Path(po3.NextX, po3.NextY, t3.Xd, yb + 2), LinkFrom = po3.Belt, LinkTo = t3.DescentFirst };
+                var h3 = TryPlans(new[] { p3 }, chain, g.Item, "band " + g.Item, out why3, out used3);
+                if (h3 == null) { errors.Add("bands: " + Who(t3.Conn) + ": 3-way branch row y" + (yb + 2) + " cannot be laid: " + why3); return; }
+                var c3 = new List<Bld>(h3); c3.AddRange(t3.Belts);
+                t3.Conn.Splitter = splitter;
+                Record(t3.Conn, chain, Order(c3), "band y" + (yb + 2) + " via splitter " + At(gg.Fx, yb) + " out N");
+                return;
+            }
             // third target from the second target's lane end
             if (gg.Targets.Count == 3) LayFromTail(gg.Targets[2].Conn, t2.Conn, chain, errors);
         }
@@ -755,6 +812,15 @@ public static class Bands
             Dir d = Delta(pr.TileX, pr.TileY, last.TileX, last.TileY);
             int ax = last.TileX + Dirs.Dx(d), ay = last.TileY + Dirs.Dy(d);
             Port t = c3.Target;
+            if (ax == t.X && ay == t.Y)
+            {
+                // the port is the tile straight ahead of the lane end (useredit3 gear under the motor row): link
+                if (t.Dir != d || Pred(t.Belt) != null || last.Output != null) { errors.Add("bands: " + Who(c3) + ": lane end " + last + " does not continue into the port " + At(t.X, t.Y) + " flowing " + t.Dir); return; }
+                Layout.Link(last, t.Belt, 1); predOf[t.Belt] = last;
+                c3.Chain = chain; c3.Laid = true;
+                fp.Notes.Add("bands: " + c3 + ": lane tail of " + c2.To.Name + " linked directly at " + At(t.X, t.Y));
+                return;
+            }
             int bx = t.PrevX, by = t.PrevY;
             var plans = new List<Plan>();
             plans.Add(new Plan { Tiles = Path(ax, ay, ax, by, bx, by), LinkFrom = last, LinkTo = t.Belt });

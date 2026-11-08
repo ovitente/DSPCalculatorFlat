@@ -63,6 +63,9 @@ public class FpConnection
     /// the port's own direction for a final cell lane. Rows are built with Flow N until RowSpec.LaneFlows exists; the
     /// assembly rebuilds the rows with these flows (docs\floorplan-design.md item 5).
     public Dir TargetFlow = Dir.N;
+    /// Band connection fed from the dead end of another connection's target lane (rule 8 / 12: "one lane past several
+    /// consumers", useredit3 iron ingot x=15: motors then gear). Null = fed through the band row or a fork.
+    public FpConnection TailOf;
     // ---- filled by Bands.Lay (additive, read by the assembly step) ----
     /// Chain name of the laid belts ("band:<item>#k", "comb:<item>#k", "straight:<item>#k", "merge:<item>#k").
     public string Chain;

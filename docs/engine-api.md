@@ -251,6 +251,23 @@ such an In port, and `Lanes.TailsToEdge` / `Lanes.InputEdgeErrors` skip it (the 
 the lane's first tile and a chain start there; a band lane linked into that tile must clear the icon). Self tests:
 `tests/SelfTestLaneFlow.cs` (`MAKEBLOCK_CASES=micro laneflow`).
 
+## Floorplan composer (2026-11-08; design in `docs/floorplan-design.md`)
+
+`FloorplanComposer.Compose(GameData, BlockSpec, ProductionPlan, List<string> notes)` -> `Layout`: `Floorplan.Build`
+(rows with per-lane flows, stacking, columns, connections), row fragments, `Bands.Lay` (comb, straight, band, lane-tail
+feeds), product rise + buffer depot, rotation to `spec.InEdge`, `Modules.TeslaGrid` + rule-13 pruning, `Lanes.AssignTiers`
+when `spec.CheapestTiers`, `Validator`. Problems come back in `Layout.Errors`, never as exceptions. The product edge must
+be opposite the input edge. `spec.AddMargin` applies rule 14 to the plan it is given.
+
+`FlatEngine.Generate` tries it first when `EngineTuning.Floorplan` is true and falls back to the search `Composer` with
+the note `floorplan not used (<first reason>), falling back to the search composer`. The last composer note is
+`composer: floorplan` or `composer: search`. `EngineTuning.FloorplanOnly` = no fallback, the floorplan's errors are the
+result. CLI: `--floorplan on|off|only`. Self tests: `tests/SelfTestFloorplanE2E.cs` (`MAKEBLOCK_CASES=micro e2e` fast,
+`e2e` all); `SelfTest.Run` switches the floorplan off for every older case, which test the search composer.
+
+`FpConnection.TailOf` = a band consumer fed from the dead end of another consumer's lane instead of the band (useredit3:
+iron ingot past the motors into the gear; past steel into the circuit's rule-11 lane end).
+
 ## Patterns (feat-pat-loader, 2026-11-08; design in `docs/patterns-design.md`, catalog in `docs/pattern-catalog.md`)
 
 Pure model, namespace `DspFlat.Engine`:

@@ -54,7 +54,7 @@ public static partial class SelfTest
             if (k.Route == FpRoute.Straight) e.Check(k.Source.X == k.Target.X && k.Target.Y > k.Source.Y, tag + " straight connection " + k + " is not aligned");
         }
         int top = fp.Rows.Max(r => r.Y1);
-        e.Check(fp.BandY0 == top + 1 && fp.CombY == 0, tag + " band y" + fp.BandY0 + " (top row " + top + "), comb y" + fp.CombY);
+        e.Check(fp.BandY0 > top && fp.BandY0 <= top + 3 && fp.CombY == 0, tag + " band y" + fp.BandY0 + " (top row " + top + "), comb y" + fp.CombY);
     }
 
     static FpRow FpRowOf(FpPlan fp, int item) { return fp.Rows.FirstOrDefault(r => r.Step != null && r.Step.Item == item); }

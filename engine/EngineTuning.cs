@@ -16,5 +16,10 @@ public static class EngineTuning
     public static int ForcedMode = -1;
     /// Debug: composer notes include every failed and valid attempt (MAKEBLOCK_DEBUG).
     public static bool DebugNotes;
+    /// Pattern-driven composer first (engine\FloorplanComposer.cs, docs\floorplan-design.md); when it does not lay or validate,
+    /// FlatEngine falls back to the search Composer. CLI: --floorplan on|off|only.
+    public static bool Floorplan = true;
+    /// With Floorplan: no fallback, the floorplan's errors are the result (CLI --floorplan only, tests).
+    public static bool FloorplanOnly;
 }
 }
