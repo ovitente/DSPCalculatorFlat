@@ -167,6 +167,30 @@ fails if a core file uses `System.IO`, `Console.`, `Environment.`, `CurrentCultu
   are laid out by `engine/SlotRows.cs` from sorter cells of real blueprints (cited per cell; checked on load by the CLI
   host, `GameCells.CheckSlotRowCells`). Self-evolution Lab (2902), Universe Matrix (6 inputs) and byproduct recipes
   (Mass-energy Storage) stay dropped.
+- **Double rows** (`engine/DoubleRows.cs`, `Modules.DoubleRow(RowSpec)`, hooks marked `PATTERNS HOOK: double rows`):
+  two facing machine columns 4 tiles apart sharing the middle output lane, own input lanes per column outside it (L1 at
+  2 tiles, L2 at 3 tiles), as the user draws them on the pattern sheet `refs\patterns\p-sheet-001.txt` (x29..37: 12 Arc
+  smelters 2x6, pitch 3, ore lanes x29/x37 at lateral 0, shared lane x33 with the west column dropping at lateral +1 /
+  slot 3 and the east column at lateral -1 / slot 9; x58..68: 6 Assembler Mk.I coils 2x3, pitch 4, L2 magnet lanes
+  x58/x68, L1 copper lanes x59/x67, output x63). The sorter cells come from the sheet's middle machines (records drift
+  ~0.024 along a column); the six west smelter ore sorters are drawn machine -> belt in the file, the engine uses the
+  reversed segment (status "derived"). Ports: `in:<item>` (column A), `in:<item>#B` (column B, `DoubleRows.PortSuffixB`),
+  `out:<item>`; each lane port carries its column's share. Tails, icons, coaters (`Coaters.AddToRow`) and the sorter
+  throughput check follow `MachineRow`. Composer: when a plan has a step with 1-2 inputs that all arrive on block input
+  lanes, >= 4 machines and a smelter / assembler, the grouped row modes are tried once more with mode bit 64
+  (`DoubleRows.ModeBit`); such rows are built as double rows (`DoubleRows.BuildRow`, both lane ports become raw input
+  lanes) and the cheaper valid attempt wins (12 smelters iron ingot 720/min: 7x41 -> 11x22). The Composer side is opt-in
+  (`DoubleRows.Enabled`, default false): a double row has two lanes per raw item separated by the output column, which
+  the decision-9 lane expectations (selftests "micro lanes": one lane per 720/min, lanes of one item adjacent on the
+  edge) do not allow; with it on, those two cases fail and everything else passes. Known limits: a 2-input double row on two raw items puts its tails as A, B | B, A along the
+  edge, which rule 10 ("input groups") rejects - the sheet's coil block has exactly that order (x61 magnet, x62 copper, x64
+  copper, x65 magnet), so the rule is stricter than the user's drawing; and the coaters are laid as the engine's COATER
+  cell (one coater line 2 below the first pickup across all lanes, ramp column outside side A, feed row across every lane),
+  not as drawn: the sheet bundles the four input lanes at x61..65 below the machines with the coaters at y5 on the bundle,
+  the lanes jog out to x58/59/67/68 at y8/y9, and the proliferator ramp sits inside the bundle (x60) with a 5-tile feed
+  ending after the last coater. To draw it like that, `Coaters.cs` would need lanes as tile paths (corners below the
+  coater line) instead of `lanes[x]` + `laneStart[x]`, a bundle mode for the coater line, and the ramp column next to the
+  bundle instead of outside the outermost lane.
 - **Unsupported steps** (`StepSupport.WhyNot`): building not in {2302, 2315, 2303, 2304, 2305, 2901, 2310}, or a recipe with more
   than one output, or a step whose product is in `ExternalItems` -> dropped with a warning, its products become input
   lanes. Steps that only fed dropped steps are removed too (warning "removed: nothing left in the block consumes X").

@@ -20,6 +20,7 @@ public static partial class SelfTest
     static partial void RunRows34Cases(); // PATTERNS HOOK: drawn rows P08/P09 (3/4-input preset), tests\SelfTestRows34.cs (SelfTest.exe only)
     static partial void RunPatternCases();   // PATTERNS HOOK: engine\BpImport.cs + engine\Patterns.cs, tests\SelfTestPatterns.cs (SelfTest.exe only)
     static partial void RunDrawnCases(); // PATTERNS HOOK: the user's drawn pattern files must pass the Validator, tests/SelfTestDrawn.cs (SelfTest.exe only)
+    static partial void RunDoubleCases(); // PATTERNS HOOK: double rows (engine\DoubleRows.cs), tests\SelfTestDouble.cs (SelfTest.exe only)
     static string root, bpDir;
     static GameData gd;
     static Cells cells;
@@ -108,6 +109,7 @@ public static partial class SelfTest
         RunLabCases();   // feat-labs: Matrix Lab towers, collider rows (SelfTestLabs.cs; partial method, absent in MakeBlock.exe)
         RunRows34Cases(); // PATTERNS HOOK: engine cells / MachineRow preset vs the drawn rows P08/P09 (SelfTestRows34.cs)
         RunPatternCases();   // PATTERNS HOOK: pattern drawings import + recognition (SelfTestPatterns.cs)
+        RunDoubleCases(); // PATTERNS HOOK: double rows (SelfTestDouble.cs; partial method, absent in MakeBlock.exe)
         // spray coaters (engine\Coaters.cs, COATERS HOOK; cases in tests\SelfTestCoaters.cs)
         Case("micro coaters: 2-input final step incLevel 1 -> 2 coaters + 1 proliferator lane with icon tail, valid + export", MicroCoaters);
         Case("micro coaters: incLevel 0 -> no coaters, no proliferator lane; validator rejects a coater without its feed node", MicroCoatersNone);

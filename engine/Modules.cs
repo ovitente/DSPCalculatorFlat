@@ -391,6 +391,12 @@ public static class Modules
         return null;
     }
 
+    // ================================================================ PATTERNS HOOK: double rows (engine\DoubleRows.cs)
+    /// Two facing columns of spec.Count machines sharing the middle output lane, own input lanes per column outside
+    /// (pattern sheet P10/P11 smelters, P01/P02 coil block). Ports "in:<item>", "in:<item>#B", "out:<item>".
+    public static Fragment DoubleRow(RowSpec spec) { return DoubleRows.DoubleRow(spec); }
+    // ================================================================ end PATTERNS HOOK
+
     // ================================================================ belts
 
     /// Belt chain through tiles (straight + 90-degree corners; corner yaw = bisector). Links consecutive tiles with
