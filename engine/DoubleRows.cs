@@ -10,9 +10,8 @@
 //   4). Shared output lane x33 between the columns: west machines drop at lateral +1 (slot 3), east machines at lateral
 //   -1 (slot 9), so the two columns use different tiles of the shared lane. Lanes run y9/y10..27 (output to y28); the two
 //   ore tails (icon 1001) sit at (32,8) and (34,8) next to the output column and reach the outer lanes by runs along y9.
-//   The six west ore sorters (#43 #48 #54 #64 #75 #82) are recorded machine -> belt (inputObj = machine, slot 10): drawn
-//   in the wrong direction, the west smelters have no input. The lane carries iron ore (tail icon #209), so the cell
-//   below uses the reversed segment, which equals the east input (#42) mirrored. Status "derived" for that reason.
+//   The six west ore sorters (#43 #48 #54 #64 #75 #82) were first recorded machine -> belt; the user re-drew them
+//   belt -> machine on 2026-11-08 (same file), so the west input cell is a game cell like the east one.
 //   Coil block (6 Assembler Mk.I, recipe 6): columns x61 / x65, pitch 4, rows y11..19. Per column: L2 lane 3 tiles out
 //   (x58 / x68, magnet, lateral 0, slots 10 / 4), L1 lane 2 tiles out (x59 / x67, copper ingot, lateral -1, slots 9 / 5),
 //   output lane x63 (west drops lateral +1 slot 3, east lateral -1 slot 9). Sorter ends sit 0.91..0.93 from the centre in
@@ -89,8 +88,8 @@ public static class DoubleRows
         sheet = new List<SorterGeo>();
         const bool IN = true, OUT = false;
         // ---- arc smelter double column, records of the middle machines (31,17) #26 west and (35,17) #25 east
-        Add(Ids.ArcSmelter, IN, -2, 0, -2, 0.004, -0.833, 0.001, 10, 1, 64, "derived",
-            "west ore lane; #64 is recorded machine -> belt (slot 10) in the sheet, reversed here: the lane carries iron ore (tail #209); equals the east input #63 mirrored");
+        Add(Ids.ArcSmelter, IN, -2, 0, -2, 0.004, -0.833, 0.001, 10, 1, 64, "game",
+            "west ore lane, lateral 0 (re-drawn belt -> machine by the user 2026-11-08)");
         Add(Ids.ArcSmelter, IN, 2, 0, 2, 0.004, 0.833, 0.001, 4, 1, 63, "game", "east ore lane, lateral 0");
         Add(Ids.ArcSmelter, OUT, 2, 1, 0.831, 0.796, 2, 0.799, 3, 1, 62, "game", "west machine drops on the shared lane at lateral +1 (game offset -5)");
         Add(Ids.ArcSmelter, OUT, -2, -1, -0.834, -0.794, -2, -0.791, 9, 1, 66, "game", "east machine drops on the shared lane at lateral -1 (game offset 4)");

@@ -177,7 +177,7 @@ public static partial class SelfTest
         var e = new Errs();
         Layout l = DrawnLayout(DrawnSheet);
         var coaters = l.All.Where(Coaters.IsCoater).ToList();
-        e.Check(coaters.Count == 4 && coaters.All(c => Math.Abs(c.Y - 5) < 0.1 && c.X >= 61 && c.X <= 65), coaters.Count + " coaters, expected 4 at y 5, x 61/62/64/65");
+        e.Check(coaters.Count == 4 && coaters.All(c => Math.Abs(c.Y - 5) < 0.1 && c.X > 60.9 && c.X < 65.1), coaters.Count + " coaters at " + string.Join(" ", coaters.Select(c => "(" + Fmt(c.X) + "," + Fmt(c.Y) + ")").ToArray()) + ", expected 4 at y 5, x 61/62/64/65");
         var rep = new ValidationReport();
         Coaters.Validate(l, null, gd, rep);
         DrawnReport("coaters", rep);

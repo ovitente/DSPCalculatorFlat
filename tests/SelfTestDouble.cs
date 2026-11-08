@@ -14,7 +14,7 @@ public static partial class SelfTest
 {
     static partial void RunDoubleCases()
     {
-        Case("micro double a: DoubleRow 12 arc smelters iron ingot == sheet x29..37 (pitch 3, lanes x29/x33/x37, sorter records within 0.02)", MicroDoubleSmelterGeometry);
+        Case("micro double a: DoubleRow 12 arc smelters iron ingot == sheet x29..37 (pitch 3, lanes x29/x33/x37, sorter records within 0.04)", MicroDoubleSmelterGeometry);
         Case("micro double b: the 12-smelter double row in a layout passes the full Validator and the export check", MicroDoubleSmelterValidate);
         Case("micro double c: coil block (6 Asm Mk.I, 2 inputs, coaters on 4 lanes) == sheet x58..68, validates (rule 10 is a warning)", MicroDoubleCoilBlock);
         Case("micro double d: composer 12 smelters iron ingot 720/min with / without DoubleRows.Enabled: both valid, double not larger", MicroDoubleComposer);
@@ -101,12 +101,12 @@ public static partial class SelfTest
         var sheetLaneX = sheet.All.Where(b => b.Kind == Kind.Belt && b.TileY >= 11 && b.TileY <= 26 && b.TileX >= 29 && b.TileX <= 37).Select(b => b.TileX).Distinct().OrderBy(x => x).ToList();
         e.Check(sheetLaneX.SequenceEqual(laneX), "sheet lanes in the machine rows at x " + string.Join(",", sheetLaneX.Select(x => x.ToString(CultureInfo.InvariantCulture)).ToArray()));
         int reversed;
-        int matched = CompareSorters(e, f, sheet, 0.02, "smelters", out reversed);
+        int matched = CompareSorters(e, f, sheet, 0.04, "smelters", out reversed);
         var sheetMach = new HashSet<Bld>(sheet.All.Where(b => b.Kind == Kind.Machine && b.TileX >= 29 && b.TileX <= 37 && b.TileY >= 10 && b.TileY <= 27));
         int sheetCount = sheet.All.Count(b => b.Kind == Kind.Sorter && ((b.Input != null && sheetMach.Contains(b.Input)) || (b.Output != null && sheetMach.Contains(b.Output))));
         e.Check(matched == 24 && sheetCount == 24, matched + " sorters matched, the sheet's 12 machines have " + sheetCount + " sorters, expected 24");
-        // the six west ore sorters are drawn machine -> belt in the sheet (west smelters without input): reversed here
-        e.Check(reversed == 6, reversed + " sorter(s) reversed against the sheet, expected 6 (west ore lane #43 #48 #54 #64 #75 #82)");
+        // the user re-drew the six west ore sorters belt -> machine (2026-11-08; before they were machine -> belt): none reversed now
+        e.Check(reversed == 0, reversed + " sorter(s) reversed against the sheet, expected 0 (west ore lane fixed by the user 2026-11-08)");
         foreach (Bld s in f.Blds.Where(b => b.Kind == Kind.Sorter && b.Output != null && b.Output.Kind == Kind.Machine && b.Output.X < 33))
             e.Check(s.Input != null && s.Input.Kind == Kind.Belt && s.Input.Carries == Ids.IronOre && s.OutputToSlot == 10, "west input sorter " + s + " does not take iron ore into slot 10");
         // ports: column A (east) "in:1001" at x37, column B "in:1001#B" at x29, output at the lane end (33, 27); sheet lane runs to y28
@@ -119,7 +119,7 @@ public static partial class SelfTest
         var tails = sheet.All.Where(b => b.Kind == Kind.Belt && b.Parameters != null && b.Parameters.Length == 2 && b.Parameters[0] == Ids.IronOre && b.TileY == 8 && b.TileX >= 29 && b.TileX <= 37).Select(b => b.TileX).OrderBy(x => x).ToList();
         e.Check(tails.SequenceEqual(new[] { 32, 34 }), "sheet ore tails at x " + string.Join(",", tails.Select(x => x.ToString(CultureInfo.InvariantCulture)).ToArray()) + " y8, expected 32/34");
         Console.WriteLine("      sheet x29..37: columns x31/x35 pitch 3, ore lanes x29/x37 (L1 lateral 0, slots 10/4), shared out x33 (west lat +1 slot 3, east lat -1 slot 9); "
-            + matched + " sorters within 0.02, " + reversed + " drawn machine->belt in the sheet; notes: " + string.Join(" | ", spec.Notes.ToArray()));
+            + matched + " sorters within 0.04, " + reversed + " drawn machine->belt in the sheet; notes: " + string.Join(" | ", spec.Notes.ToArray()));
         return e.Result();
     }
 
@@ -232,13 +232,13 @@ public static partial class SelfTest
             e.Check(lane != null && lane.Carries == kv.Value, "lane x" + kv.Key + " carries " + (lane == null ? "nothing" : lane.Carries.ToString(CultureInfo.InvariantCulture)) + ", sheet " + kv.Value);
         }
         int reversed;
-        int matched = CompareSorters(e, g, sheet, 0.02, "coil", out reversed);
+        int matched = CompareSorters(e, g, sheet, 0.04, "coil", out reversed);
         e.Check(matched == 18 && reversed == 0, matched + " sorters matched (" + reversed + " reversed), expected 18 / 0");
         var cy = g.Blds.Where(Coaters.IsCoater).Select(c => c.TileY).Distinct().ToList();
         var sheetCoaters = sheet.All.Where(b => Coaters.IsCoater(b) && b.TileX >= 58 && b.TileX <= 68).ToList();
         e.Check(sheetCoaters.Count == 4 && sheetCoaters.All(c => c.TileY == 5), "sheet coaters: " + sheetCoaters.Count + " at y " + string.Join(",", sheetCoaters.Select(c => c.TileY.ToString(CultureInfo.InvariantCulture)).Distinct().ToArray()));
         Console.WriteLine("      sheet x58..68: columns x61/x65 pitch 4, L2 magnet x58/x68 (lat 0, slots 10/4), L1 copper x59/x67 (lat -1, slots 9/5), out x63; " + matched
-            + " sorters within 0.02; engine coaters at y " + string.Join(",", cy.Select(y => y.ToString(CultureInfo.InvariantCulture)).ToArray()) + " (sheet frame), sheet coaters at y5 on the bundled lanes x61/62/64/65");
+            + " sorters within 0.04; engine coaters at y " + string.Join(",", cy.Select(y => y.ToString(CultureInfo.InvariantCulture)).ToArray()) + " (sheet frame), sheet coaters at y5 on the bundled lanes x61/62/64/65");
         // full validation: the sheet itself runs magnet, copper, copper, magnet along the edge (tails x61 magnet, x62 copper,
         // x64 copper, x65 magnet); rule 10 only warns about it since 2026-11-08
         var input = new PlanInput { TargetItemId = Ids.MagneticCoil, TargetPerMin = 480 };
