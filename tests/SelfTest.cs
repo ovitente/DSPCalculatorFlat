@@ -814,13 +814,15 @@ public static partial class SelfTest
             a.Parameters = new[] { items[i], 0 };
             l.Ports.Add(new Port { Name = "in:" + items[i] + "#" + i, Kind = PortKind.In, X = i * 2, Y = 0, Dir = Dir.N, Item = items[i], Rate = 60, Belt = a, Chain = a.Chain });
         }
+        // rule 10 is a preference since 2026-11-08 (user: the order along the edge is not important): warning, no error
         var r = new Validator(gd, CoilSpec()).Validate(l, null);
-        if (!r.Errors.Any(m => m.Contains("input groups"))) return "interleaved lanes accepted";
-        Console.WriteLine("      (" + r.Errors.First(m => m.Contains("input groups")) + ")");
-        // grouped order passes the group check
+        if (r.Errors.Any(m => m.Contains("input groups"))) return "interleaved lanes rejected (rule 10 must be a warning)";
+        if (!r.Warnings.Any(m => m.Contains("input groups"))) return "interleaved lanes: no rule 10 warning";
+        Console.WriteLine("      (" + r.Warnings.First(m => m.Contains("input groups")) + ")");
+        // grouped order gives no warning
         l.Ports[1].X = 10; l.Ports[1].Belt.X = 10;
         var r2 = new Validator(gd, CoilSpec()).Validate(l, null);
-        return r2.Errors.Any(m => m.Contains("input groups")) ? "grouped lanes (iron, iron, copper) rejected" : null;
+        return r2.Warnings.Any(m => m.Contains("input groups")) ? "grouped lanes (iron, iron, copper) warned" : null;
     }
 
     static string PipelineTailsAndTowers()

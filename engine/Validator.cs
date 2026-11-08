@@ -1391,6 +1391,9 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
 
         /// User rule (2026-10-31 review): block input lanes along the input edge are grouped by material - all lanes of
         /// one raw item adjacent, never interleaved (iron, copper, iron), so one belt + splitters can feed a group.
+        /// Downgraded to a warning 2026-11-08: the user's drawn coil block (refs\patterns\p-sheet-001.txt x58..68) runs
+        /// magnet, copper, copper, magnet along the edge and "the order along the edge is not important"; the composer
+        /// still groups by material when it can.
         void InputGroups()
         {
             var ins = L.Ports.Where(p => p.Kind == PortKind.In).ToList();
@@ -1405,8 +1408,8 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                 closed.Add(seq[i - 1]);
                 if (closed.Contains(seq[i]))
                 {
-                    R.Fail("input groups: block input lanes interleave materials along the " + edge + " edge (" +
-                        string.Join(", ", seq.Select(it => gd != null ? gd.ItemName(it) : it.ToString(CultureInfo.InvariantCulture)).ToArray()) + "); lanes of one raw item must be adjacent");
+                    R.Warn("input groups: block input lanes interleave materials along the " + edge + " edge (" +
+                        string.Join(", ", seq.Select(it => gd != null ? gd.ItemName(it) : it.ToString(CultureInfo.InvariantCulture)).ToArray()) + "); grouping by material is preferred, not required (user 2026-11-08)");
                     return;
                 }
             }

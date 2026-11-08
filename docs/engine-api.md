@@ -183,8 +183,8 @@ fails if a core file uses `System.IO`, `Console.`, `Environment.`, `CurrentCultu
   (`DoubleRows.Enabled`, default false): a double row has two lanes per raw item separated by the output column, which
   the decision-9 lane expectations (selftests "micro lanes": one lane per 720/min, lanes of one item adjacent on the
   edge) do not allow; with it on, those two cases fail and everything else passes. Known limits: a 2-input double row on two raw items puts its tails as A, B | B, A along the
-  edge, which rule 10 ("input groups") rejects - the sheet's coil block has exactly that order (x61 magnet, x62 copper, x64
-  copper, x65 magnet), so the rule is stricter than the user's drawing; and the coaters are laid as the engine's COATER
+  edge; the sheet's coil block has exactly that order (x61 magnet, x62 copper, x64 copper, x65 magnet), so rule 10
+  ("input groups") is a warning since 2026-11-08 (user: the order along the edge is not important); and the coaters are laid as the engine's COATER
   cell (one coater line 2 below the first pickup across all lanes, ramp column outside side A, feed row across every lane),
   not as drawn: the sheet bundles the four input lanes at x61..65 below the machines with the coaters at y5 on the bundle,
   the lanes jog out to x58/59/67/68 at y8/y9, and the proliferator ramp sits inside the bundle (x60) with a 5-tile feed

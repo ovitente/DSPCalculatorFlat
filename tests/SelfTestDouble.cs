@@ -16,7 +16,7 @@ public static partial class SelfTest
     {
         Case("micro double a: DoubleRow 12 arc smelters iron ingot == sheet x29..37 (pitch 3, lanes x29/x33/x37, sorter records within 0.02)", MicroDoubleSmelterGeometry);
         Case("micro double b: the 12-smelter double row in a layout passes the full Validator and the export check", MicroDoubleSmelterValidate);
-        Case("micro double c: coil block (6 Asm Mk.I, 2 inputs, coaters on 4 lanes) == sheet x58..68, validates except rule 10 (interleaved tails)", MicroDoubleCoilBlock);
+        Case("micro double c: coil block (6 Asm Mk.I, 2 inputs, coaters on 4 lanes) == sheet x58..68, validates (rule 10 is a warning)", MicroDoubleCoilBlock);
         Case("micro double d: composer 12 smelters iron ingot 720/min with / without DoubleRows.Enabled: both valid, double not larger", MicroDoubleComposer);
     }
 
@@ -239,16 +239,16 @@ public static partial class SelfTest
         e.Check(sheetCoaters.Count == 4 && sheetCoaters.All(c => c.TileY == 5), "sheet coaters: " + sheetCoaters.Count + " at y " + string.Join(",", sheetCoaters.Select(c => c.TileY.ToString(CultureInfo.InvariantCulture)).Distinct().ToArray()));
         Console.WriteLine("      sheet x58..68: columns x61/x65 pitch 4, L2 magnet x58/x68 (lat 0, slots 10/4), L1 copper x59/x67 (lat -1, slots 9/5), out x63; " + matched
             + " sorters within 0.02; engine coaters at y " + string.Join(",", cy.Select(y => y.ToString(CultureInfo.InvariantCulture)).ToArray()) + " (sheet frame), sheet coaters at y5 on the bundled lanes x61/62/64/65");
-        // full validation: the only expected failure is rule 10 (input groups): magnet, copper | copper, magnet along the edge,
-        // which the sheet itself has (tails x61 magnet, x62 copper, x64 copper, x65 magnet)
+        // full validation: the sheet itself runs magnet, copper, copper, magnet along the edge (tails x61 magnet, x62 copper,
+        // x64 copper, x65 magnet); rule 10 only warns about it since 2026-11-08
         var input = new PlanInput { TargetItemId = Ids.MagneticCoil, TargetPerMin = 480 };
         var s = new PlanStep { RecipeId = Ids.RecipeMagneticCoil, BuildingItemId = Ids.AsmMk1, MachineCount = 4, Machines = 6, IncLevel = 1 };
         s.InputsPerMin[Ids.Magnet] = 480; s.InputsPerMin[Ids.CopperIngot] = 240; s.OutputsPerMin[Ids.MagneticCoil] = 480;
         input.Steps.Add(s);
         input.ExternalItems.Add(Ids.Magnet); input.ExternalItems.Add(Ids.CopperIngot);
         input.Options.ProliferatorItemId = Coaters.ProliferatorMk1;
-        string rule10 = ValidateFragment(e, f, input, "coil block 2x3 + coaters", "double-coil-6-coaters.txt", m => m.StartsWith("input groups:", StringComparison.Ordinal));
-        e.Check(rule10 != null, "rule 10 (input groups) did not fire although the lanes run magnet, copper, copper, magnet along the edge");
+        // rule 10 is a warning since 2026-11-08 (the user drew exactly this order), so the block must validate cleanly
+        ValidateFragment(e, f, input, "coil block 2x3 + coaters", "double-coil-6-coaters.txt", null);
         Console.WriteLine("      notes: " + string.Join(" | ", spec.Notes.ToArray()));
         return e.Result();
     }
