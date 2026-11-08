@@ -21,6 +21,7 @@ public static partial class SelfTest
     static partial void RunPatternCases();   // PATTERNS HOOK: engine\BpImport.cs + engine\Patterns.cs, tests\SelfTestPatterns.cs (SelfTest.exe only)
     static partial void RunDrawnCases(); // PATTERNS HOOK: the user's drawn pattern files must pass the Validator, tests/SelfTestDrawn.cs (SelfTest.exe only)
     static partial void RunDoubleCases(); // PATTERNS HOOK: double rows (engine\DoubleRows.cs), tests\SelfTestDouble.cs (SelfTest.exe only)
+    static partial void RunFloorplanCases(); // FLOORPLAN HOOK: pattern-driven floorplan (engine\Floorplan.cs), tests\SelfTestFloorplan.cs (SelfTest.exe only)
     static string root, bpDir;
     static GameData gd;
     static Cells cells;
@@ -114,6 +115,7 @@ public static partial class SelfTest
         Case("micro coaters: 2-input final step incLevel 1 -> 2 coaters + 1 proliferator lane with icon tail, valid + export", MicroCoaters);
         Case("micro coaters: incLevel 0 -> no coaters, no proliferator lane; validator rejects a coater without its feed node", MicroCoatersNone);
         RunDrawnCases(); // PATTERNS HOOK: drawn pattern files (SelfTestDrawn.cs)
+        RunFloorplanCases(); // FLOORPLAN HOOK: engine\Floorplan.cs (SelfTestFloorplan.cs)
         Console.WriteLine("selftest: " + passed + " passed, " + failed + " failed, " + skipped + " skipped");
         return failed == 0 && skipped == 0 ? 0 : 1;
     }
