@@ -58,6 +58,10 @@ public static class Coaters
     public const int SlotOut = 14, SlotIn = 15;
     /// Lateral tolerance of a belt passing under a coater (game: belt within 0.3 m of the addon axis, conditions.md 4.1).
     public const double AxisTolM = 0.3;
+    /// Grid tolerance of a feed node as the game writes it: the user's drawn coater block (refs\patterns\p-sheet-001.txt
+    /// #87..#91) has the feed row at y 4.013 / 4.014 and x 60.995 / 62.995, L1.txt #80 at y 7.987 (header above). The old
+    /// 0.01 rejected the drawing.
+    public const double FeedGridTol = 0.02;
 
     // ---------------------------------------------------------------- game numbers
     /// Sprays per proliferator item: ItemProto.HpMax of the game's ItemProtoSet (analysis\raw-protos.json, extracted
@@ -93,6 +97,31 @@ public static class Coaters
     /// port are ordinary belts (their bridges are checked like every other route).
     public static bool IsFeed(Bld b) { return b != null && b.Kind == Kind.Belt && b.Cell == FeedCell; }
     public const string FeedCell = "coat-feed";
+
+    /// Tags the feed chains of a layout that carries no cell tags (a blueprint drawn in the game and imported): every
+    /// raised node at FeedZ one tile behind a coater, and from it the raised nodes of its chain upstream (down to the
+    /// z 0.5 ramp) and downstream (to the chain end) get Cell = FeedCell. Proven by refs\patterns\p-sheet-001.txt
+    /// (#92..#96 ramp (60,1,0) -> (60,2,0.5) -> (60,3,1) -> corner (60,4,1), #87..#91 feed (61..65,4,1.002..1.005)
+    /// behind the coaters #0..#3 at (61/62/64/65,5)). Tagged belts are left alone; the Validator calls this first.
+    public static void MarkFeeds(Layout l)
+    {
+        if (l == null) return;
+        var coaters = l.All.Where(IsCoater).ToList();
+        if (coaters.Count == 0) return;
+        var belts = l.All.Where(b => b.Kind == Kind.Belt).ToList();
+        var mainPred = new Dictionary<Bld, Bld>();
+        foreach (Bld b in belts) if (b.Output != null && b.OutputToSlot <= 1 && !mainPred.ContainsKey(b.Output)) mainPred[b.Output] = b;
+        foreach (Bld c in coaters)
+        {
+            int[] ft = FeedTile(c);
+            foreach (Bld f in belts.Where(b => b.IsRaised && b.TileX == ft[0] && b.TileY == ft[1] && Math.Abs(b.Z - FeedZ) < 0.05))
+            {
+                var seen = new HashSet<Bld>();
+                for (Bld n = f; n != null && n.IsRaised && seen.Add(n); ) { if (n.Cell == null) n.Cell = FeedCell; Bld p; n = mainPred.TryGetValue(n, out p) ? p : null; }
+                for (Bld n = f.Output; n != null && n.Kind == Kind.Belt && n.IsRaised && seen.Add(n); n = n.Output) if (n.Cell == null) n.Cell = FeedCell;
+            }
+        }
+    }
     /// Block input port of a proliferator lane: proliferator item and its lane leads into a COATER feed cell.
     public static bool IsFeedPort(Port p)
     {
@@ -253,11 +282,14 @@ public static class Coaters
 
     /// Coater checks: every input sorter of a proliferated step's machine sits on a lane with a coater upstream; every
     /// coater on a straight lane belt (one input, no side-join) with straight belts under its body; one feed node at z 1
-    /// one tile behind every coater, reached by a proliferator feed chain from a block input port (approach - foot - ramp
-    /// 0.5 - feed level 1, straight up to the first z 1 node); feed nodes on the grid, >= 0.5 tile from sorters, over free
-    /// ground or straight ground belts, never two on one tile; feed chains carry a proliferator.
+    /// one tile behind every coater, reached by a proliferator feed chain from a block input port or a proliferator icon
+    /// tail (approach - foot - ramp 0.5 - feed level 1, straight up to the first z 1 node; the z 1 run may go on straight
+    /// before its first corner and ends dead after the last coater: p-sheet-001.txt (60,3,1) -> corner (60,4,1) -> (65,4,1)
+    /// end); feed nodes on the grid (FeedGridTol), >= 0.5 tile from sorters, over free ground or straight ground belts,
+    /// never two on one tile; feed chains carry a proliferator.
     public static void Validate(Layout L, ProductionPlan plan, GameData gd, ValidationReport R)
     {
+        MarkFeeds(L);   // drawn blueprints carry no cell tags
         var coaters = L.All.Where(IsCoater).ToList();
         var feeds = L.All.Where(IsFeed).ToList();
         int bad = 0;
@@ -328,13 +360,16 @@ public static class Coaters
             while (back.Add(n0)) { Bld p = P(n0).FirstOrDefault(q => q.OutputToSlot <= 1); if (p == null) break; n0 = p; }
             Port port = L.Ports.FirstOrDefault(p => p.Kind == PortKind.In && p.Belt == n0);
             string w = "feed chain at " + at(s0.X, s0.Y);
-            if (port == null) { fail(w + " is not fed from a block input port"); continue; }
+            // a drawn blueprint has no block ports: its chain start is an icon tail carrying the proliferator
+            // (p-sheet-001.txt #96 (60,0) params [1142,0])
+            int portItem = port != null ? port.Item : n0.Parameters != null && n0.Parameters.Length == 2 && IsProliferator(n0.Parameters[0]) ? n0.Parameters[0] : 0;
+            if (portItem == 0) { fail(w + " is not fed from a block input port or a proliferator icon tail"); continue; }
             chains++;
-            if (!IsProliferator(port.Item)) fail(w + ": port item " + port.Item + " is not a proliferator");
+            if (!IsProliferator(portItem)) fail(w + ": port item " + portItem + " is not a proliferator");
             var chainL = new List<Bld>();
             var seen = new HashSet<Bld>();
             for (Bld n = n0; n != null && n.Kind == Kind.Belt && seen.Add(n); n = n.Output) chainL.Add(n);
-            if (chainL.Any(n => n.Carries != port.Item)) fail(w + ": belts carry another item than the port " + port.Item);
+            if (chainL.Any(n => n.Carries != 0 && n.Carries != portItem)) fail(w + ": belts carry another item than the port " + portItem);   // Carries 0 = imported belt, item unknown
             int firstUp = chainL.FindIndex(n => IsFeed(n) && n.IsRaised);
             if (firstUp < 2) { fail(w + ": needs an approach node and a ground foot before the ramp"); continue; }
             Bld a = chainL[firstUp - 2], foot = chainL[firstUp - 1], ramp = chainL[firstUp];
@@ -353,7 +388,7 @@ public static class Coaters
         foreach (Bld b in feeds)
         {
             string w = "feed node " + at(b.X, b.Y);
-            if (Math.Abs(b.X - Math.Round(b.X)) > 0.01 || Math.Abs(b.Y - Math.Round(b.Y)) > 0.01) fail(w + " is off the tile grid");
+            if (Math.Abs(b.X - Math.Round(b.X)) > FeedGridTol || Math.Abs(b.Y - Math.Round(b.Y)) > FeedGridTol) fail(w + " is off the tile grid");
             if (!b.IsRaised) continue;
             double ds = sorters.Count == 0 ? double.MaxValue : sorters.Min(s => GameData.SegmentDist(b.X, b.Y, s.X, s.Y, s.X2, s.Y2));
             if (ds < 0.5) fail(w + " is " + ds.ToString("0.##", CultureInfo.InvariantCulture) + " tile from a sorter");

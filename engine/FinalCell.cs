@@ -377,7 +377,7 @@ namespace DspFlat.Engine
                 if (!usedSlots.Add(i.GetHashCode() + ":" + s.InputFromSlot + ":" + At(i.X, i.Y))) R.Fail("two sorters on slot " + s.InputFromSlot + " of machine at " + At(i.X, i.Y));
                 if (!usedSlots.Add(o.GetHashCode() + ":" + s.OutputToSlot + ":" + At(o.X, o.Y))) R.Fail("two sorters on slot " + s.OutputToSlot + " at " + At(o.X, o.Y));
                 double vx = s.X2 - s.X, vy = s.Y2 - s.Y;
-                if (YawDiff(s.Yaw, Dirs.Norm(Math.Atan2(vx, vy) * 180.0 / Math.PI)) > 5) R.Fail("sorter yaw " + F(s.Yaw) + " does not match its direction" + at);
+                if (YawDiff(s.Yaw, Dirs.Norm(Math.Atan2(vx, vy) * 180.0 / Math.PI)) > GameData.SorterMaxSkewDeg) R.Fail("sorter yaw " + F(s.Yaw) + " does not match its direction" + at);   // PATTERNS HOOK: game F11 skew 24 deg (p-sheet-001.txt #49 smelter -> assembler 10.3 deg), was 5
                 Get(outSorters, i).Add(s);
                 RecipeDef rd = gd != null ? gd.Recipe(i.RecipeId) : null;
                 if (m2m)
