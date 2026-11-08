@@ -192,6 +192,7 @@ public class Port
     public double Rate;           // items/min the plan puts through this port
     public Bld Belt;              // the belt tile at (X,Y)
     public bool Seam;             // In port that is a bus overlap tail (joins the previous module's belt end): no icon (rule 5 exempt)
+    public bool FedFromBand;      // FLOORPLAN HOOK: In port fed inside the block (lane descending from the north band, RowSpec.InputFlows): no tail to the input edge, no input-edge check (Lanes.cs)
     public string Chain;          // chain name of that lane
 
     public int NextX { get { return X + Dirs.Dx(Dir); } }

@@ -220,6 +220,27 @@ exists (note "output placed on side B ..."), then the unproven derived/inferred 
 assembler collider). Output sorters whose belt tile has a predecessor get the game's NEGATIVE belt offset
 (`SorterGeo.Make(..., laneContinuesBehind)`: floor(20 d), P08 -5; inputs keep the clamp at 0). The 1- and 2-input presets
 are unchanged. Self tests: `tests/SelfTestRows34.cs` (`MAKEBLOCK_CASES=micro rows34`).
+
+## Lane flows (floorplan, 2026-11-08; `docs/floorplan-design.md` style item 5)
+
+`RowSpec.InputFlows` (`Dir?[]`, index = `InputItems` index) and `RowSpec.OutputFlow` (`Dir?`) override the flow of
+single lanes of `Modules.MachineRow` and `Modules.DoubleRow`; a null array / null entry means `spec.Flow`. Helpers
+`spec.InputFlow(i)`, `spec.OutFlow()`, `spec.CheckLaneFlows()` (an override must be `Flow` or its opposite, else
+`ArgumentException`). A lane flowing against `Flow` keeps its tiles (it still spans every machine's sorter) but is laid
+in the other direction: belts yawed that way (180 in the Flow-N frame), its **In port on the first tile along the new
+flow** (the north end of the row for a S lane: `Y` = the row's top line, or one belt beyond the last pickup for a
+`TailItems` lane), **Out port on the last tile** (the row's bottom line for a S output lane), the tail and the icon
+(`LaneIcons`) at that start end, the dead end of an input lane on the first machine's pickup tile (the Validator's
+"runs beyond its last pickup" rule holds along the real flow). Sorter belt offsets come from `SorterGeo.Make` with the
+real belt yaw, so an input cell with offset 4 under N gets 0 under S (and `laneContinuesBehind` counts predecessors
+along the real flow). In a `DoubleRow` both columns' lanes of input *i* follow `InputFlows[i]`; the shared output lane
+follows `OutputFlow`. Spray coaters on a reversed lane are not supported (`ArgumentException`). The user's turret
+(`refs\engine-missile-turret-7.5-v1-useredit3.txt` motor column) is the oracle: inputs descend from the band, motors
+ascend. A band-fed lane is not a block input: the floorplan sets `Port.FedFromBand` (FLOORPLAN HOOK in `Model.cs`) on
+such an In port, and `Lanes.TailsToEdge` / `Lanes.InputEdgeErrors` skip it (the `Validator` still wants the icon on
+the lane's first tile and a chain start there; a band lane linked into that tile must clear the icon). Self tests:
+`tests/SelfTestLaneFlow.cs` (`MAKEBLOCK_CASES=micro laneflow`).
+
 ## Patterns (feat-pat-loader, 2026-11-08; design in `docs/patterns-design.md`, catalog in `docs/pattern-catalog.md`)
 
 Pure model, namespace `DspFlat.Engine`:

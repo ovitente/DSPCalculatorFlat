@@ -43,6 +43,30 @@ public class RowSpec
     public int ProliferatorItem;
     public readonly List<string> Problems = new List<string>();  // filled by MachineRow: copy into Layout.Errors
     public readonly List<string> Notes = new List<string>();     // filled by MachineRow: informational
+
+    // ---- lane flows (FLOORPLAN, docs\floorplan-design.md style item 5) ----
+    /// Per-lane flow override: InputFlows[i] (index = InputItems index) and OutputFlow; a null array / null entry means
+    /// spec.Flow. Only Flow or its opposite is allowed (lanes run along the row). A lane flowing against Flow is laid
+    /// in the opposite direction over the same tiles: belts yawed that way, its In/Out port, tail and icon at the end
+    /// where the lane now starts (In port = first tile along the flow; Out port = last tile). The user's turret
+    /// (refs\engine-missile-turret-7.5-v1-useredit3.txt motor column): inputs descend from the band, the product ascends.
+    public Dir?[] InputFlows;
+    public Dir? OutputFlow;
+    /// Flow of input lane i (InputFlows override or Flow).
+    public Dir InputFlow(int i) { return InputFlows != null && i >= 0 && i < InputFlows.Length && InputFlows[i].HasValue ? InputFlows[i].Value : Flow; }
+    /// Flow of the output lane (OutputFlow override or Flow).
+    public Dir OutFlow() { return OutputFlow.HasValue ? OutputFlow.Value : Flow; }
+    /// Throws ArgumentException when an override is not along the row axis (Flow or its opposite).
+    public void CheckLaneFlows()
+    {
+        int n = InputItems != null ? InputItems.Length : 0;
+        if (InputFlows != null && InputFlows.Length > n) throw new ArgumentException("row " + Name + ": InputFlows has more entries than InputItems");
+        for (int i = 0; i < n; i++)
+            if (InputFlow(i) != Flow && InputFlow(i) != Dirs.Opposite(Flow))
+                throw new ArgumentException("row " + Name + ": input lane " + (i + 1) + " flow " + InputFlow(i) + " is not along the row (Flow " + Flow + ")");
+        if (OutFlow() != Flow && OutFlow() != Dirs.Opposite(Flow))
+            throw new ArgumentException("row " + Name + ": output lane flow " + OutFlow() + " is not along the row (Flow " + Flow + ")");
+    }
 }
 
 public static class Modules
@@ -78,6 +102,7 @@ public static class Modules
         if (spec.InputItems.Distinct().Count() != spec.InputItems.Length || spec.InputItems.Contains(spec.OutputItem))
             throw new ArgumentException("row " + spec.Name + ": duplicate item among inputs/output");
         // lanes hook (PLAN.md decision 8): Mk.III belts/sorters are allowed, the tiers are caps (engine\Lanes.cs)
+        spec.CheckLaneFlows();   // FLOORPLAN: per-lane flow overrides (RowSpec.InputFlows / OutputFlow)
         spec.Problems.Clear(); spec.Notes.Clear();
 
         int n = spec.InputItems.Length;
@@ -198,28 +223,50 @@ public static class Modules
         // COATERS HOOK: coater line c of a proliferated row (Coaters.cs cell COATER); lanes start lower to make room
         int coatY = Coaters.RowCoaterY(spec, reqs.Where(r => r.In && Coaters.Coats(spec, r.Item)).Select(r => r.Geos.Min(g => g.BeltDy)));
         var laneItem = new Dictionary<int, int>();
+        // FLOORPLAN: lanes flowing against spec.Flow run S in this frame (laneRev); their tiles are listed in flow order
+        // (index 0 = first tile along the flow), so laneStart[x] is the START y (the north end for a reversed lane)
+        var laneRev = new HashSet<int>();
         foreach (var r in reqs)
         {
             int lx = r.Geos[0].BeltDx;
             if (lanes.ContainsKey(lx)) throw new InvalidOperationException("row " + spec.Name + ": two requirements on lane x=" + lx);
             string chain = spec.Name + ":" + (r.In ? "in:" : "out:") + r.Item;
             var tiles = new List<Bld>();
-            // input lanes end at the last machine's pickup tile: no dead-end stub beyond it (user rule, proven by the
-            // user's in-game edit of refs\engine-coil-360.txt, which removed exactly those tail tiles)
-            int yEnd = r.In ? (spec.Count - 1) * pitch + r.Geos.Max(g => g.BeltDy) : y1;
-            // block input lanes start one belt before the first pickup (the tail, user's edit of
-            // refs\engine-electric-motor-120-v3-user.txt), never above the row's bottom line
-            int yStart = y0;
-            // the drawn 3/4-input rows start the output lane at the first machine's pickup tile (P08 x0 lane: y 6 for the
-            // machine at y 5), not one tile below the row
-            if (!r.In && drawnRow) yStart = r.Geos.Min(g => g.BeltDy);
+            bool rev = (r.In ? spec.InputFlow(reqs.IndexOf(r)) : spec.OutFlow()) != spec.Flow;
+            int pickLo = r.Geos.Min(g => g.BeltDy), pickHi = (spec.Count - 1) * pitch + r.Geos.Max(g => g.BeltDy);
             bool tail = r.In && spec.TailItems != null && spec.TailItems.Contains(r.Item);
-            if (tail) yStart = Math.Min(y0, r.Geos.Min(g => g.BeltDy) - 1);
-            if (r.In) { yStart = Coaters.LaneStart(spec, r.Item, tail, yStart, coatY); laneItem[lx] = r.Item; }   // COATERS HOOK
-            laneStart[lx] = yStart;
-            for (int y = yStart; y <= yEnd; y++)
+            int yStart, yEnd;
+            if (!rev)
             {
-                Bld b = f.Add(Bld.Belt(spec.BeltItem, lx, y, 0, r.Item, chain));
+                // input lanes end at the last machine's pickup tile: no dead-end stub beyond it (user rule, proven by the
+                // user's in-game edit of refs\engine-coil-360.txt, which removed exactly those tail tiles)
+                yEnd = r.In ? pickHi : y1;
+                // block input lanes start one belt before the first pickup (the tail, user's edit of
+                // refs\engine-electric-motor-120-v3-user.txt), never above the row's bottom line
+                yStart = y0;
+                // the drawn 3/4-input rows start the output lane at the first machine's pickup tile (P08 x0 lane: y 6 for the
+                // machine at y 5), not one tile below the row
+                if (!r.In && drawnRow) yStart = pickLo;
+                if (tail) yStart = Math.Min(y0, pickLo - 1);
+                if (r.In) yStart = Coaters.LaneStart(spec, r.Item, tail, yStart, coatY);   // COATERS HOOK
+            }
+            else
+            {
+                // the same lane mirrored along the row: it starts at the row's top line (or one belt beyond the last pickup
+                // when it is a tail) and ends at the first machine's pickup tile
+                if (r.In && Coaters.Coats(spec, r.Item)) throw new ArgumentException("row " + spec.Name + ": spray coaters on the reversed input lane " + r.Item + " are not supported");
+                yEnd = r.In ? pickLo : y0;
+                yStart = y1;
+                if (!r.In && drawnRow) yStart = pickHi;
+                if (tail) yStart = Math.Max(y1, pickHi + 1);
+                laneRev.Add(lx);
+            }
+            if (r.In) laneItem[lx] = r.Item;
+            laneStart[lx] = yStart;
+            int step = rev ? -1 : 1;
+            for (int y = yStart; rev ? y >= yEnd : y <= yEnd; y += step)
+            {
+                Bld b = f.Add(Bld.Belt(spec.BeltItem, lx, y, rev ? 180 : 0, r.Item, chain));
                 b.Role = spec.Name + " " + r.Role + " lane";
                 if (tiles.Count > 0) Layout.Link(tiles[tiles.Count - 1], b, 1);
                 tiles.Add(b);
@@ -229,7 +276,7 @@ public static class Modules
             lanes[lx] = tiles;
             Bld end = r.In ? tiles[0] : tiles[tiles.Count - 1];
             f.AddPort(new Port { Name = (r.In ? "in:" : "out:") + r.Item, Kind = r.In ? PortKind.In : PortKind.Out,
-                X = lx, Y = r.In ? yStart : y1, Dir = Dir.N, Item = r.Item,
+                X = lx, Y = r.In ? yStart : yEnd, Dir = rev ? Dir.S : Dir.N, Item = r.Item,
                 Rate = r.In ? (spec.InputRates != null ? spec.InputRates[reqs.IndexOf(r)] : 0) : spec.OutputRate,
                 Belt = end, Chain = chain });
         }
@@ -241,9 +288,10 @@ public static class Modules
             foreach (var r in reqs)
                 foreach (var g in r.Geos)
                 {
-                    int ti = my + g.BeltDy - laneStart[g.BeltDx];
+                    // tile index along the flow (reversed lanes count down from their north start)
+                    int ti = laneRev.Contains(g.BeltDx) ? laneStart[g.BeltDx] - (my + g.BeltDy) : my + g.BeltDy - laneStart[g.BeltDx];
                     Bld belt = lanes[g.BeltDx][ti];
-                    Bld s = g.Make(m, belt, spec.SorterItem, r.Item, ti > 0);   // ti > 0: the lane continues behind this tile
+                    Bld s = g.Make(m, belt, spec.SorterItem, r.Item, ti > 0);   // ti > 0: the lane continues behind this tile (along its real flow)
                     s.Role = spec.Name + " " + r.Role + " L" + r.L + " (" + g.Name + ")";
                     f.Add(s);
                 }

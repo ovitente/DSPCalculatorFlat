@@ -160,6 +160,7 @@ public static class DoubleRows
             throw new ArgumentException("double row " + spec.Name + ": duplicate item among inputs/output");
         if (!Supports(spec.MachineItem))
             throw new InvalidOperationException("double row " + spec.Name + ": machine " + spec.MachineItem + " has no double-column cells (sheet: arc smelter, assembler Mk.I)");
+        spec.CheckLaneFlows();   // FLOORPLAN: per-lane flow overrides (both columns' lanes of input i share InputFlows[i]; the shared lane OutputFlow)
         spec.Problems.Clear(); spec.Notes.Clear();
 
         int n = spec.InputItems.Length;
@@ -255,20 +256,26 @@ public static class DoubleRows
         // COATERS HOOK: coater line of a proliferated row (Coaters.cs cell COATER); coated lanes start lower
         int coatY = Coaters.RowCoaterY(spec, cols.SelectMany(c => c.Reqs).Where(r => r.In && Coaters.Coats(spec, r.Item)).Select(r => r.Geos.Min(g => g.BeltDy)));
 
+        // FLOORPLAN: lanes flowing against spec.Flow run S in this frame (laneRev); tiles are listed in flow order, so
+        // laneStart[x] is the START y (the north end for a reversed lane)
+        var laneRev = new HashSet<int>();
         // shared output lane
         {
+            bool rev = spec.OutFlow() != spec.Flow;
             string chain = spec.Name + ":out:" + spec.OutputItem;
             var tiles = new List<Bld>();
-            for (int y = y0; y <= y1; y++)
+            int yStart = rev ? y1 : y0, yEnd = rev ? y0 : y1, step = rev ? -1 : 1;
+            for (int y = yStart; rev ? y >= yEnd : y <= yEnd; y += step)
             {
-                Bld b = f.Add(Bld.Belt(spec.BeltItem, 0, y, 0, spec.OutputItem, chain));
+                Bld b = f.Add(Bld.Belt(spec.BeltItem, 0, y, rev ? 180 : 0, spec.OutputItem, chain));
                 b.Role = spec.Name + " out lane (shared)";
                 if (tiles.Count > 0) Layout.Link(tiles[tiles.Count - 1], b, 1);
                 tiles.Add(b);
             }
             Layout.Link(tiles[tiles.Count - 1], null, 0);
-            lanes[0] = tiles; laneStart[0] = y0;
-            f.AddPort(new Port { Name = "out:" + spec.OutputItem, Kind = PortKind.Out, X = 0, Y = y1, Dir = Dir.N, Item = spec.OutputItem,
+            lanes[0] = tiles; laneStart[0] = yStart;
+            if (rev) laneRev.Add(0);
+            f.AddPort(new Port { Name = "out:" + spec.OutputItem, Kind = PortKind.Out, X = 0, Y = yEnd, Dir = rev ? Dir.S : Dir.N, Item = spec.OutputItem,
                 Rate = spec.OutputRate, Belt = tiles[tiles.Count - 1], Chain = chain });
         }
         // input lanes per column
@@ -279,17 +286,34 @@ public static class DoubleRows
                 if (lanes.ContainsKey(lx)) throw new InvalidOperationException("double row " + spec.Name + ": two lanes on x=" + lx);
                 string suffix = c.IsA ? "" : PortSuffixB;
                 string chain = spec.Name + ":in:" + r.Item + suffix;
-                // lanes end at the column's last pickup tile (no dead-end stub, as MachineRow; the sheet runs one tile further)
-                int yEnd = (c.Count - 1) * pitch + r.Geos.Max(g => g.BeltDy);
-                int yStart = y0;
+                bool rev = spec.InputFlow(r.Index) != spec.Flow;
                 bool tail = spec.TailItems != null && spec.TailItems.Contains(r.Item);
-                if (tail) yStart = Math.Min(y0, r.Geos.Min(g => g.BeltDy) - 1);
-                yStart = Coaters.LaneStart(spec, r.Item, tail, yStart, coatY);   // COATERS HOOK
+                int pickLo = r.Geos.Min(g => g.BeltDy), pickHi = (c.Count - 1) * pitch + r.Geos.Max(g => g.BeltDy);
+                int yStart, yEnd;
+                if (!rev)
+                {
+                    // lanes end at the column's last pickup tile (no dead-end stub, as MachineRow; the sheet runs one tile further)
+                    yEnd = pickHi;
+                    yStart = y0;
+                    if (tail) yStart = Math.Min(y0, pickLo - 1);
+                    yStart = Coaters.LaneStart(spec, r.Item, tail, yStart, coatY);   // COATERS HOOK
+                }
+                else
+                {
+                    // mirrored along the column: start at the column's top line (one belt beyond the last pickup for a tail),
+                    // end at the first machine's pickup tile
+                    if (Coaters.Coats(spec, r.Item)) throw new ArgumentException("double row " + spec.Name + ": spray coaters on the reversed input lane " + r.Item + " are not supported");
+                    int top = (c.Count - 1) * pitch + 1;
+                    yEnd = pickLo;
+                    yStart = tail ? Math.Max(top, pickHi + 1) : top;
+                    laneRev.Add(lx);
+                }
                 laneStart[lx] = yStart; laneItem[lx] = r.Item;
                 var tiles = new List<Bld>();
-                for (int y = yStart; y <= yEnd; y++)
+                int step = rev ? -1 : 1;
+                for (int y = yStart; rev ? y >= yEnd : y <= yEnd; y += step)
                 {
-                    Bld b = f.Add(Bld.Belt(spec.BeltItem, lx, y, 0, r.Item, chain));
+                    Bld b = f.Add(Bld.Belt(spec.BeltItem, lx, y, rev ? 180 : 0, r.Item, chain));
                     b.Role = spec.Name + " " + c.Tag + " " + r.Role + " lane";
                     if (tiles.Count > 0) Layout.Link(tiles[tiles.Count - 1], b, 1);
                     tiles.Add(b);
@@ -297,7 +321,7 @@ public static class DoubleRows
                 Layout.Link(tiles[tiles.Count - 1], null, 0);
                 if (spec.LaneIcons) tiles[0].Parameters = new[] { r.Item, 0 };
                 lanes[lx] = tiles;
-                f.AddPort(new Port { Name = "in:" + r.Item + suffix, Kind = PortKind.In, X = lx, Y = yStart, Dir = Dir.N, Item = r.Item,
+                f.AddPort(new Port { Name = "in:" + r.Item + suffix, Kind = PortKind.In, X = lx, Y = yStart, Dir = rev ? Dir.S : Dir.N, Item = r.Item,
                     Rate = spec.InputRates != null ? spec.InputRates[r.Index] * c.Count / spec.Count : 0, Belt = tiles[0], Chain = chain });
             }
         // machines and sorters
@@ -311,7 +335,8 @@ public static class DoubleRows
                     foreach (SorterGeo g in r.Geos)
                     {
                         int lx = c.X + g.BeltDx;
-                        Bld belt = lanes[lx][my + g.BeltDy - laneStart[lx]];
+                        int ti = laneRev.Contains(lx) ? laneStart[lx] - (my + g.BeltDy) : my + g.BeltDy - laneStart[lx];   // index along the flow
+                        Bld belt = lanes[lx][ti];
                         Bld s = g.Make(m, belt, spec.SorterItem, r.Item);
                         s.Role = spec.Name + " " + c.Tag + " " + r.Role + " L" + r.L + " (" + g.Name + ")";
                         f.Add(s);

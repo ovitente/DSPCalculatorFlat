@@ -162,7 +162,7 @@ public static class Lanes
         int edge = box.Y0;
         foreach (Port p in ports)
         {
-            if (p.Kind != PortKind.In || p.Belt == null || p.Seam || p.Y <= edge) continue;
+            if (p.Kind != PortKind.In || p.Belt == null || p.Seam || p.FedFromBand || p.Y <= edge) continue;   // FLOORPLAN HOOK: band-fed lanes keep their start
             Bld first = p.Belt;
             bool ok = p.Dir == Dir.N && first.TileX == p.X && first.TileY == p.Y;
             for (int y = edge; y < p.Y && ok; y++) ok = free(p.X, y);
@@ -197,7 +197,7 @@ public static class Lanes
         Dir e = spec.InEdge;
         foreach (Port p in l.Ports)
         {
-            if (p.Kind != PortKind.In || p.Seam || p.Belt == null) continue;
+            if (p.Kind != PortKind.In || p.Seam || p.FedFromBand || p.Belt == null) continue;   // FLOORPLAN HOOK: band-fed lanes are not block inputs
             bool on = e == Dir.S ? p.Y == box.Y0 : e == Dir.N ? p.Y == box.Y1 : e == Dir.W ? p.X == box.X0 : p.X == box.X1;
             if (!on) res.Add("input edge: lane " + p.Item + " starts at (" + p.X + "," + p.Y + "), not on the " + e + " edge of the block");
             else if (p.Dir != Dirs.Opposite(e)) res.Add("input edge: lane " + p.Item + " at (" + p.X + "," + p.Y + ") flows " + p.Dir + ", it must enter from the " + e + " edge");
