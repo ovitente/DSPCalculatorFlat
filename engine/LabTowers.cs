@@ -30,7 +30,7 @@ public static class LabTowers
     public const int SlotOutTo = 14, SlotInFrom = 15, SlotOutFrom = 15, SlotInTo = 14;
     public static readonly int[] ProductionParameters = { 1, 0 };
     public const string SourceKey = "bluematrix";
-    public const string SourceFile = @"4-sci\bluematrix.txt";
+    public const string SourceFile = @"4-sci\bluematrix.txt|m-sci\m1-blue\bluematrix.txt";   // user folder reorganised 2026-11-07
 
     public static bool IsLab(int item) { return item == Ids.MatrixLab; }
     /// A lab above the ground level of a tower (it occupies no tile and takes no sorters).

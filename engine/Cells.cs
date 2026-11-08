@@ -159,8 +159,8 @@ public static class Geo
         { "turb2u", @"refs\engine-turbine-60-v2-userupgrade.txt" },
         { "lent", @"refs\lent-begin.txt" },
         { "mk3", @"t-tpl\Assemblers mk III.txt" },
-        { "plane", @"2-smelt\Smelters.txt" },
-        { "fuel", @"5-chem\Fuel.txt" },
+        { "plane", @"2-smelt\Smelters.txt|1-t1\Smelters.txt" },
+        { "fuel", @"5-chem\Fuel.txt|1-t1\Fuel.txt" },
         // feat-labs: Matrix Lab tower cells (LabTowers.cs) and Miniature Particle Collider cells (Collider.cs)
         { LabTowers.SourceKey, LabTowers.SourceFile },
         { Collider.SourceKey, Collider.SourceFile },

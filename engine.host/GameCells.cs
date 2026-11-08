@@ -38,6 +38,13 @@ public class Cells
     /// Source path: "refs\x" -> ToolsRoot\refs\x, anything else relative to the user's Blueprint folder.
     public static string Resolve(string blueprintDir, string rel)
     {
+        // "a|b": alternatives (the user's folders were reorganised 2026-11-07); the first existing one wins, else the first
+        if (rel.IndexOf('|') >= 0)
+        {
+            string[] alts = rel.Split('|');
+            foreach (string a in alts) { string p = Resolve(blueprintDir, a); if (File.Exists(p)) return p; }
+            return Resolve(blueprintDir, alts[0]);
+        }
         if (rel.StartsWith(@"refs\", StringComparison.OrdinalIgnoreCase)) return Path.Combine(ToolsRoot ?? "", rel);
         return Path.Combine(blueprintDir ?? "", rel);
     }
@@ -157,7 +164,7 @@ public class Cells
     /// Spray coater prototype (engine\Coaters.cs): the user's game-0.10.35 blueprint 7-logi\L1.txt, coater #36 at (3,7)
     /// (model 120, slots 14/15/15/14, no links). Optional: when the file is missing or differs, only layouts with coaters
     /// fail to emit ("no prototype for item 2313"); every other block keeps working.
-    public const string CoaterSource = @"7-logi\L1.txt";
+    public const string CoaterSource = @"7-logi\L1.txt|1-t1\L1.txt";
     public const int CoaterIndex = 36;
     void SoftCoaterCell()
     {
