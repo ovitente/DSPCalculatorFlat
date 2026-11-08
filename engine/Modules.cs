@@ -59,7 +59,8 @@ public static class Modules
     static readonly int[] InLateralPref = { -1, 1, 0 };
     static readonly int[] OutLateralPref = { 0, -1, 1 };
 
-    /// Row of machines with the preset lane arrangement for 1/2/3/4 inputs (CONTRACT.md "MachineRow presets").
+    /// Row of machines with the preset lane arrangement for 1/2/3/4 inputs (CONTRACT.md "MachineRow presets"; 3/4 inputs:
+    /// the user's drawn rows P08/P09, docs\patterns-design.md - output on side A at L3 beyond in1 L1 / in3 L2).
     /// Fragment: machines, all lane belts (full length past every machine), sorters; ports "in:<item>" (first tile of
     /// each input lane) and "out:<item>" (last tile of the output lane). Origin: first machine center at (0,0) for
     /// Flow N; other flows are the rigid rotation around (0,0). Input-lane icons follow spec.LaneIcons.
@@ -88,8 +89,14 @@ public static class Modules
             reqs.Add(new Req { Role = "in" + (i + 1), Item = spec.InputItems[i], In = true, Side = i % 2 == 0 ? sideA : sideB,
                 L = i < 2 ? 1 : 2, PerMachine = spec.InputRates != null ? spec.InputRates[i] / spec.Count : 0 });
         int lanesA = reqs.Count(r => r.Side == sideA), lanesB = reqs.Count(r => r.Side == sideB);
-        var outSides = new List<Dir[]>();   // (side) candidates in preference order: B first, then A
-        outSides.Add(new[] { sideB }); outSides.Add(new[] { sideA });
+        // output side candidates in preference order. 1-2 inputs: side B (the free side) first, then A.
+        // 3-4 inputs (PATTERN ROWS, docs\patterns-design.md P08/P09): the user's drawing puts the output on side A at
+        // L3, beyond the two input lanes of that side (in1 L1, in3 L2); side B keeps in2 L1 (and in4 L2). Side B with
+        // the output at L2/L3 stays as the fallback when no proven cell combination exists for the drawn arrangement.
+        var outSides = new List<Dir[]>();
+        if (n >= 3) { outSides.Add(new[] { sideA }); outSides.Add(new[] { sideB }); }
+        else { outSides.Add(new[] { sideB }); outSides.Add(new[] { sideA }); }
+        Dir preferredOut = outSides[0][0];
         var outReq = new Req { Role = "out", Item = spec.OutputItem, In = false, PerMachine = spec.OutputRate / spec.Count };
         // output sorters must carry the machine's FULL-speed output (user rule: a machine at 100% is never blocked by
         // its output sorter; e.g. Mk.II assembler circuit 120/min > L2 Mk.II 90/min -> second output sorter)
@@ -112,7 +119,8 @@ public static class Modules
             if (Assign(spec.MachineItem, all, 0, new HashSet<int>(new[] { 0, 90, 180, 270 }), out yaw))
             {
                 reqs = all; placed = true;
-                if (side != sideB) spec.Notes.Add("output placed on side A (side B has no proven cell)");
+                if (side != preferredOut) spec.Notes.Add("output placed on side " + (side == sideA ? "A" : "B") + " (side "
+                    + (preferredOut == sideA ? "A" : "B") + " has no proven cell combination)");
                 break;
             }
             why += " side " + side + " L" + L + ": no proven sorter cell combination in Geo;";
@@ -175,7 +183,9 @@ public static class Modules
                 else if (r.Geos.Count > 1) spec.Notes.Add(r.Role + ": " + r.Geos.Count + " sorters per machine for throughput");
             }
         }
-        if (n >= 3) spec.Notes.Add(n + "-input preset (rule 2" + (n == 4 ? "+3" : "") + ") is not proven in game yet - needs an in-game test");
+        // the drawn arrangement (output on side A at L3 with proven cells) is game-proven by P08 / P09; anything else is not
+        bool drawnRow = n >= 3 && outReq.Side == sideA && outReq.L == 3 && reqs.All(r => r.Geos.All(g => g.Proven));
+        if (n >= 3 && !drawnRow) spec.Notes.Add(n + "-input preset (rule 2" + (n == 4 ? "+3" : "") + ") in this arrangement is not proven in game - needs an in-game test");
 
         bool onlyL1 = reqs.All(r => r.L == 1);
         int pitch = ChoosePitch(spec, onlyL1 ? 3 : 4, machineYaw);
@@ -200,6 +210,9 @@ public static class Modules
             // block input lanes start one belt before the first pickup (the tail, user's edit of
             // refs\engine-electric-motor-120-v3-user.txt), never above the row's bottom line
             int yStart = y0;
+            // the drawn 3/4-input rows start the output lane at the first machine's pickup tile (P08 x0 lane: y 6 for the
+            // machine at y 5), not one tile below the row
+            if (!r.In && drawnRow) yStart = r.Geos.Min(g => g.BeltDy);
             bool tail = r.In && spec.TailItems != null && spec.TailItems.Contains(r.Item);
             if (tail) yStart = Math.Min(y0, r.Geos.Min(g => g.BeltDy) - 1);
             if (r.In) { yStart = Coaters.LaneStart(spec, r.Item, tail, yStart, coatY); laneItem[lx] = r.Item; }   // COATERS HOOK
@@ -228,8 +241,9 @@ public static class Modules
             foreach (var r in reqs)
                 foreach (var g in r.Geos)
                 {
-                    Bld belt = lanes[g.BeltDx][my + g.BeltDy - laneStart[g.BeltDx]];
-                    Bld s = g.Make(m, belt, spec.SorterItem, r.Item);
+                    int ti = my + g.BeltDy - laneStart[g.BeltDx];
+                    Bld belt = lanes[g.BeltDx][ti];
+                    Bld s = g.Make(m, belt, spec.SorterItem, r.Item, ti > 0);   // ti > 0: the lane continues behind this tile
                     s.Role = spec.Name + " " + r.Role + " L" + r.L + " (" + g.Name + ")";
                     f.Add(s);
                 }

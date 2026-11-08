@@ -172,3 +172,16 @@ fails if a core file uses `System.IO`, `Console.`, `Environment.`, `CurrentCultu
 - **Serialization** (MD5F, `BlueprintData`, export string) is host-side: CLI `DspFlat.Host.GameEmitter.Serialize(records,
   header, layout)` + `GameEmitter.CheckExport` (former `Validator.CheckExport`). Kit and bus modes (`Kit`, `Bus`) moved
   to `engine.host/` as CLI-only legacy modes (they export through the game DLL).
+
+## Pattern rows (P08/P09, 2026-11-08)
+
+The user's in-game drawings `refs\patterns\p08-asm-row-3in.txt` (3 inputs) and `p09-asm-row-4in.txt` (4 inputs) are
+the proof of the 3/4-input `Modules.MachineRow` preset (`docs/patterns-design.md`). `Geo.SourceFiles` keys `p08` /
+`p09`; the cells sit in a delimited "PATTERN ROWS" region at the end of the `Geo` table (status `game`, source record
+cited, re-read by the CLI host's `Cells.Load` self-check). Preset for 3-4 inputs: side A carries in1 (L1) and in3 (L2),
+side B in2 (L1) and in4 (L2), the output goes on side A at **L3** beyond the two input lanes; the output lane starts at
+the first machine's pickup tile. Side B with the output at L2/L3 remains the fallback when no proven cell combination
+exists (note "output placed on side B ..."), then the unproven derived/inferred cells. Pitch stays 4 (L2/L3 sorters,
+assembler collider). Output sorters whose belt tile has a predecessor get the game's NEGATIVE belt offset
+(`SorterGeo.Make(..., laneContinuesBehind)`: floor(20 d), P08 -5; inputs keep the clamp at 0). The 1- and 2-input presets
+are unchanged. Self tests: `tests/SelfTestRows34.cs` (`MAKEBLOCK_CASES=micro rows34`).
