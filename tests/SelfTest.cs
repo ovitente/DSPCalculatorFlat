@@ -19,6 +19,7 @@ public static partial class SelfTest
     static partial void RunPackCases();  // feat-rules-pack: packing rules 14/12/8, implemented in SelfTestPack.cs (SelfTest.exe only)
     static partial void RunRows34Cases(); // PATTERNS HOOK: drawn rows P08/P09 (3/4-input preset), tests\SelfTestRows34.cs (SelfTest.exe only)
     static partial void RunPatternCases();   // PATTERNS HOOK: engine\BpImport.cs + engine\Patterns.cs, tests\SelfTestPatterns.cs (SelfTest.exe only)
+    static partial void RunDrawnCases(); // PATTERNS HOOK: the user's drawn pattern files must pass the Validator, tests/SelfTestDrawn.cs (SelfTest.exe only)
     static string root, bpDir;
     static GameData gd;
     static Cells cells;
@@ -110,6 +111,7 @@ public static partial class SelfTest
         // spray coaters (engine\Coaters.cs, COATERS HOOK; cases in tests\SelfTestCoaters.cs)
         Case("micro coaters: 2-input final step incLevel 1 -> 2 coaters + 1 proliferator lane with icon tail, valid + export", MicroCoaters);
         Case("micro coaters: incLevel 0 -> no coaters, no proliferator lane; validator rejects a coater without its feed node", MicroCoatersNone);
+        RunDrawnCases(); // PATTERNS HOOK: drawn pattern files (SelfTestDrawn.cs)
         Console.WriteLine("selftest: " + passed + " passed, " + failed + " failed, " + skipped + " skipped");
         return failed == 0 && skipped == 0 ? 0 : 1;
     }
@@ -1014,7 +1016,8 @@ public static partial class SelfTest
         var ok3 = errs(BridgeModel(3, 0.5, false, false)); e.Check(ok3.Count == 0, "valid bridge over 3 rejected: " + string.Join(" | ", ok3.ToArray()));
         var z1 = errs(BridgeModel(1, 1.0, false, false)); e.Check(z1.Any(m => m.Contains("z ") || m.Contains("slope")), "z 1.0 bridge accepted");
         var n4 = errs(BridgeModel(4, 0.5, false, false)); e.Check(n4.Count == 0, "raised run over 4 belts rejected (cell RAISED_RUN has no span limit): " + string.Join(" | ", n4.ToArray()));
-        var tf = errs(BridgeModel(1, 0.5, true, false)); e.Check(tf.Any(m => m.Contains("straight") || m.Contains("foot")), "turn on a ramp foot accepted");
+        var tfR = new Validator(gd, null).ValidateBelts(BridgeModel(1, 0.5, true, false));   // PATTERNS HOOK: a turn on a ramp foot is a drag-tool SHOULD (S4), the game pastes it (p-sheet-001.txt (39,41)): warning, no error
+        e.Check(tfR.Errors.Count == 0 && tfR.Warnings.Any(m => m.Contains("S4")), "turn on a ramp foot: " + (tfR.Errors.Count > 0 ? "rejected: " + tfR.Errors[0] : "no S4 warning"));
         var cc = errs(BridgeModel(1, 0.5, false, true)); e.Check(cc.Any(m => m.Contains("not straight through")), "bridge over a belt end accepted");
         // two-level: a second raised node on an already crossed tile
         Layout two = BridgeModel(1, 0.5, false, false);

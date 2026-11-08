@@ -146,6 +146,17 @@ fails if a core file uses `System.IO`, `Console.`, `Environment.`, `CurrentCultu
   z 1 feed belt one tile behind every coater (game geometry: user's `7-logi\L1.txt`, game 0.10.35; see the file header).
   Proliferator demand = coated lane flow / sprays per item (ItemProto.HpMax 12/24/60; `GameData.SprayCounts`).
   Prototype record: `7-logi\L1.txt` #36 (CLI host, optional). Hook points in shared files are marked `COATERS HOOK`.
+- **Drawn patterns, Validator relaxations** (feat-pat-drawn, 2026-11-08; `tests/SelfTestDrawn.cs`, filter `micro drawn`):
+  the user's drawn files `refs\patterns\p08-asm-row-3in.txt`, `p09-asm-row-4in.txt`, `p12-input-edge-comb.txt`,
+  `p-sheet-001.txt` are game-proven, so every rule they broke was relaxed to what they show: belt yaw = chord from the
+  predecessor to the successor (diagonal corners); diagonal / off-grid belt links accepted within the game F4/F5 limits
+  (`BeltMaxLinkM`, slope); a sole slot-2/3 predecessor is a belt's input (`MainPred`); sorter yaw may skew up to F11
+  (`GameData.SorterMaxSkewDeg`, was 5 deg); raised runs may start at an icon tail / end dead in the air and sit over a
+  stacked tail / end, raised nodes may be off the grid; a turn on a ramp foot or first/last raised node (S4) is a warning;
+  input lanes may run past the last pickup while flush with the last machine's footprint; coater feed chains of imported
+  layouts are tagged from the geometry (`Coaters.MarkFeeds`, also called by `ValidateBelts`), may start at a proliferator
+  icon tail instead of a block port, and feed nodes tolerate `Coaters.FeedGridTol` (0.02) of game noise. Open item: the
+  sheet's x47..49 three-level stack with diagonal lane shifts is EdgeBus territory (rules 2/3) and is still rejected there.
 - **Proliferator rates**: with `IncLevel > 0` the machine speed is derived from the plan's numbers
   (`output * time / (outCount * 60 * MachineCount)`), so the layout carries exactly the plan's rates.
 - **`EngineResult`** extensions for hosts: `GameVersion`, `Header` (`BpHeader`), `Notes` (composer notes), `Plan` (the

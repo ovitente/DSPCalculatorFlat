@@ -56,7 +56,7 @@ public static class BpImport
             if (Ids.IsBelt(item))
             {
                 n = Bld.Belt(item, x, y, yaw, 0, null);
-                if (Math.Abs(x - Math.Round(x)) > 0.01 || Math.Abs(y - Math.Round(y)) > 0.01) n.Cell = SplitterGeo.BeltCell;
+                if (Math.Abs(x - Math.Round(x)) > 0.02 || Math.Abs(y - Math.Round(y)) > 0.02) n.Cell = SplitterGeo.BeltCell;
                 if (par != null && par.Length == 2 && par[0] != 0) n.Parameters = (int[])par.Clone();
             }
             else if (item == Ids.Splitter)

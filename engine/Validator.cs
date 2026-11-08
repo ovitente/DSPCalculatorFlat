@@ -99,7 +99,7 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
         }
 
         public void PowerOnly() { Classify(); Power(); }
-        public void BeltsOnly() { Classify(); Overlap(); BeltLinks(); BeltYaw(); Topo(); Sorters(); Splitters(); Bridges(); }
+        public void BeltsOnly() { Classify(); Overlap(); BeltLinks(); BeltYaw(); Topo(); Sorters(); Splitters(); Bridges(); Coaters.Validate(L, null, gd, R); }   // PATTERNS: coater feed cells are conveyor constructs (p-sheet-001.txt x58..68)
 
         public void All()
         {
@@ -182,11 +182,25 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
             if (b.Input != null && b.Input.Kind == Kind.Splitter) return DirTo(b.Input, b);
             return Dirs.FromYaw(b.Yaw);
         }
-        /// The straight/corner predecessor (OutputToSlot 1) of a belt, or null.
+        /// The straight/corner predecessor (OutputToSlot 1) of a belt, or null. A sole predecessor linked on slot 2/3 is
+        /// the belt's input as well: the game records a belt drawn INTO an existing node as a side slot even when the node
+        /// is a plain corner (refs\patterns\p-sheet-001.txt #460 (39,40) -> #459 (39,41) yaw 315 slot 2, the only input
+        /// of a corner that feeds the raised run (38,41,0.5); #478 (47.5,40,1) -> #477 (48,41,1) slot 2).
         Bld MainPred(Bld b)
         {
-            foreach (Bld p in Peek(preds, b)) if (p.OutputToSlot <= 1) return p;
-            return null;
+            List<Bld> ps = Peek(preds, b);
+            foreach (Bld p in ps) if (p.OutputToSlot <= 1) return p;
+            return ps.Count == 1 ? ps[0] : null;
+        }
+        /// A real side-join into t: a predecessor on slot 2/3 that is not t's (sole) main input.
+        bool HasSideJoin(Bld t) { Bld m = MainPred(t); return Peek(preds, t).Any(p => p.OutputToSlot > 1 && p != m); }
+        /// Direction (yaw, degrees) of the chord from a to b.
+        static double ChordYaw(Bld a, Bld b) { return Dirs.Norm(Math.Atan2(b.X - a.X, b.Y - a.Y) * 180.0 / Math.PI); }
+        /// 3D length of a belt link in metres, worst case over the E-W tile factor (game F4).
+        static double LinkLenM(Bld a, Bld b)
+        {
+            double dx = Math.Abs(b.X - a.X) * GameData.MetersPerTile * GameData.EwFactorMax, dy = Math.Abs(b.Y - a.Y) * GameData.MetersPerTile, dz = Math.Abs(b.Z - a.Z) * GameData.BeltLevelM;
+            return Math.Sqrt(dx * dx + dy * dy + dz * dz);
         }
         IEnumerable<Bld> Next(Bld node)
         {
@@ -197,6 +211,7 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
         // ---------------------------------------------------------------- classify
         void Classify()
         {
+            Coaters.MarkFeeds(L);   // PATTERNS: imported drawings carry no cell tags; the feed chains behind coaters are tagged from the geometry
             foreach (Bld b in L.All) inLayout.Add(b);
             belts = L.All.Where(b => b.Kind == Kind.Belt).ToList();
             sorters = L.All.Where(b => b.Kind == Kind.Sorter).ToList();
@@ -334,13 +349,16 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
         void BeltLinks()
         {
             var tiles = new Dictionary<long, Bld>();
+            int freeNodes = 0, diagonal = 0;
             foreach (Bld b in belts)
             {
                 if (splitterTouch.Contains(b) || b.IsRaised) continue;
                 long k = K(b.TileX, b.TileY);
                 if (tiles.ContainsKey(k)) { R.Fail("belt tile used twice at (" + b.TileX + "," + b.TileY + ")"); beltGraphOk = false; }
                 else tiles[k] = b;
-                if (Fractional(b) && !IsSplitterNeighbour(b)) R.Fail("belt at fractional position not next to a splitter: " + b);
+                // PATTERNS: a ground node off the grid is accepted by the game (p-sheet-001.txt #512 (48.666,40,0), a lane
+                // shifting one column diagonally); its links are still held to the game F4/F5 limits below
+                if (Fractional(b) && !IsSplitterNeighbour(b)) freeNodes++;
             }
             foreach (Bld b in belts)
             {
@@ -352,6 +370,11 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                 double dx = o.X - b.X, dy = o.Y - b.Y, d = Math.Abs(dx) + Math.Abs(dy);
                 bool frac = Fractional(b) || Fractional(o);
                 bool ok = AxisAligned(dx, dy) && (frac ? d > 0.6 && d < 1.15 : Math.Abs(d - 1) < 0.01);
+                // PATTERNS: a diagonal link (splitter side output turning on the second tile with a diagonal corner,
+                // p-sheet-001.txt #294 (11.892,25.001) -> #293 (11,26) and #301 (14.108,25.001) -> #300 (15,26); lane shifts
+                // #513 (49,39) -> (48.666,40) -> (48.333,41) -> (48,42)) is a plain belt link in the game: only F4/F5
+                // (CheckLinkGeometry) limit it. Links beyond the game maximum stay errors.
+                if (!ok && LinkLenM(b, o) <= GameData.BeltMaxLinkM + 1e-6) { ok = true; diagonal++; }
                 if (!ok) { R.Fail("belt link not adjacent: " + b + " -> " + At(o.X, o.Y)); beltGraphOk = false; continue; }
                 if (b.OutputToSlot < 1 || b.OutputToSlot > 3) R.Fail("belt link with outputToSlot " + b.OutputToSlot + ": " + b);
                 if (o.Output == b) R.Fail("two belts link into each other at " + At(b.X, b.Y));
@@ -361,6 +384,7 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                 if (b.Output != null && b.Output.Kind == Kind.Splitter) CheckLinkGeometry(b, b.Output);
                 else if (b.Input != null && b.Input.Kind == Kind.Splitter) CheckLinkGeometry(b.Input, b);
             if (linkErrors > 10) R.Fail(linkErrors + " belt link geometry errors in total");
+            if (freeNodes + diagonal > 0) R.Note("free-form belts: " + freeNodes + " ground node(s) off the grid, " + diagonal + " diagonal link(s) (game F4/F5 only; refs\\patterns\\p-sheet-001.txt P14 diagonal corners, x47..49 lane shifts)");
             // per target: one main predecessor, side-joins perpendicular on distinct slots (rule 6)
             foreach (Bld t in belts)
             {
@@ -370,10 +394,11 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                 if (main.Count > 1) R.Fail("belt has " + main.Count + " straight predecessors (use a side-join, slot 2/3): " + t);
                 Dir flow = FlowOf(t);
                 var slots = new HashSet<int>();
+                Bld mp = MainPred(t);
                 foreach (Bld p in ps)
                 {
                     Dir pd = DirTo(p, t);
-                    if (p.OutputToSlot <= 1)
+                    if (p.OutputToSlot <= 1 || p == mp)   // PATTERNS: a sole slot-2 predecessor is the belt's input (see MainPred)
                     {
                         if (t.Output != null && t.Output.Kind == Kind.Belt && DirTo(t, t.Output) == Dirs.Opposite(pd)) R.Fail("belt reverses direction at " + At(t.X, t.Y));
                         continue;
@@ -458,6 +483,20 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
             HashSet<Bld> busNodes = EdgeBus.BusNodes(belts);   // EDGEBUS HOOK: stacked edge bus runs (rules 2/3) are checked by EdgeBus.Check
             foreach (string m in EdgeBus.Check(belts, busNodes, (x, y) => { Bld ob; return occ.TryGetValue(K(x, y), out ob) ? ob : null; }, sorters, R.Warn)) fail(m);   // EDGEBUS HOOK
             if (busNodes.Count > 0) R.Note("edge bus: " + busNodes.Count + " stacked node(s) (rules 2/3, refs\\engine-missile-turret-7.5-v1-useredit3.txt top bus)");   // EDGEBUS HOOK
+            // PATTERNS (refs\patterns\p-sheet-001.txt, drawn by the user in game 0.10.35): relaxations proven by the sheet
+            //  - a raised chain may START in the air at an icon tail (#425 (27,35,0.5) icon 1001) and END in the air as a
+            //    dead end (#452 (38,47,0.5)); the ground belt under such a node may start / end on the same tile (stacked
+            //    tails (27,35) z 0 / 0.5, stacked ends (38,47) z 0 / 0.5); a raised node over the START or END of a ground
+            //    belt that it merely passes stays an error (old "over a belt end" case);
+            //  - raised nodes may sit off the tile grid (#511 (48.333,41,0.5), #478 (47.5,40,1), lane shift); still at most
+            //    one raised node per (rounded) tile;
+            //  - a turn on a ramp foot or on the first / last raised node (S4) is a drag-tool SHOULD in conditions.md, not
+            //    a paste rule: foot #459 (39,41) is a corner (yaw 315) and the first raised node #458 (38,41,0.5) turns N;
+            //    reported as a warning;
+            //  - foot yaws follow the chord of the actual links (#512 (48.666,40) yaw 341.76 before (48.333,41,0.5)).
+            int offGrid = 0, airStarts = 0, airEnds = 0, stacked = 0;
+            Action<string> s4 = m => R.Warn(m + " (S4 is a drag-tool SHOULD, not a paste rule: refs\\patterns\\p-sheet-001.txt (39,41) corner foot -> (38,41,0.5) corner)");
+            Func<Bld, bool> iconTail = b => b.Parameters != null && b.Parameters.Length == 2 && b.Parameters[0] != 0 && MainPred(b) == null && !(b.Input != null && b.Input.Kind == Kind.Splitter);
             foreach (Bld b in belts)
             {
                 if (!b.IsRaised || IsPortBelt(b) || Coaters.IsFeed(b)) continue;   // COATERS HOOK: feed cell checked in Coaters.Validate
@@ -466,14 +505,16 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                 bool hr = Math.Abs(b.Z - 1.0) < 0.02 && InHighRun(b);
                 if (hr) high++;
                 else if (Math.Abs(b.Z - GameData.BridgeZ) > 0.01) fail("raised node z " + F(b.Z) + ", the proven raised level is z " + F(GameData.BridgeZ) + " (z 1 only straight from a splitter high port)" + at);
-                if (Fractional(b)) fail("raised node off the tile grid" + at);
+                if (Fractional(b)) offGrid++;
                 long k = K(b.TileX, b.TileY);
                 if (raisedAt.ContainsKey(k)) fail("two raised nodes on one tile (two-level crossing, not proven)" + at);
                 raisedAt[k] = b;
                 Bld o;
                 if (occ.TryGetValue(k, out o) && o.Kind != Kind.Belt) fail("raised node over a building " + o + at);
                 Dir? i0 = din(b), o0 = dout(b);
-                if (o0 == null && !hr) fail("raised run ends in the air (no ground foot after it)" + at);
+                bool airEnd = b.Output == null && !hr;
+                if (airEnd) airEnds++;
+                else if (o0 == null && !hr) fail("raised run ends in the air (no ground foot after it)" + at);
                 Dir a = i0 ?? o0 ?? Dirs.FromYaw(b.Yaw), c = o0 ?? a;
                 if (a != c) rCorners++;
                 Bld g = BeltAtTile(b.TileX, b.TileY);
@@ -484,13 +525,16 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                     Bld gp = MainPred(g);
                     bool straight = g.Output != null && g.Output.Kind == Kind.Belt && gp != null
                         && DirTo(gp, g) == DirTo(g, g.Output) && Math.Abs(Math.Abs(g.Output.X - g.X) + Math.Abs(g.Output.Y - g.Y) - 1) < 0.01;
-                    if (!straight) fail("ground belt under a raised node is not straight through (turns, starts or ends)" + at);
+                    bool stackedTail = gp == null && g.Output != null && g.Output.Kind == Kind.Belt && iconTail(g) && iconTail(b) && b.Output != null;
+                    bool stackedEnd = g.Output == null && gp != null && airEnd;
+                    if (!straight && !stackedTail && !stackedEnd) fail("ground belt under a raised node is not straight through (turns, starts or ends)" + at);
                     else
                     {
-                        Dir f = DirTo(g, g.Output);
+                        if (stackedTail || stackedEnd) stacked++;
+                        Dir f = g.Output != null ? DirTo(g, g.Output) : DirTo(gp, g);
                         if (a == c ? f == Dirs.Opposite(a) : (f != a && f != c)) fail("ground belt under a raised node flows " + f + " against the raised node (" + a + "->" + c + ")" + at);
                     }
-                    if (Peek(preds, g).Any(p => p.OutputToSlot > 1)) fail("ground belt under a raised node takes a side-join (not proven)" + at);
+                    if (HasSideJoin(g)) fail("ground belt under a raised node takes a side-join (not proven)" + at);
                 }
                 double ds = sorters.Count == 0 ? double.MaxValue : sorters.Min(s => GameData.SegmentDist(b.X, b.Y, s.X, s.Y, s.X2, s.Y2));
                 if (ds < 0.5) fail("raised node " + F(ds) + " tile from a sorter (on its tile)" + at);
@@ -509,33 +553,38 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                 for (Bld n = b; n != null && n.Kind == Kind.Belt && n.IsRaised && !IsPortBelt(n); n = n.Output) run.Add(n);
                 maxRun = Math.Max(maxRun, run.Count);
                 Bld last = run[run.Count - 1], far = last.Output;
-                if (foot == null) { fail("raised run without a ground foot (chain starts in the air)" + at); continue; }
-                Dir d1 = DirTo(foot, b);
-                bool fromHigh = IsPortBelt(foot) && foot.Z > 0.9;
-                if (!fromHigh)
+                if (foot == null && !iconTail(b)) { fail("raised run without a ground foot (chain starts in the air; only an icon tail may)" + at); continue; }
+                if (foot == null) airStarts++;
+                Dir d1 = foot != null ? DirTo(foot, b) : run.Count > 1 ? DirTo(b, run[1]) : far != null ? DirTo(b, far) : Dirs.FromYaw(b.Yaw);
+                bool fromHigh = foot != null && IsPortBelt(foot) && foot.Z > 0.9;
+                if (foot != null && !fromHigh)
                 {
                     if (foot.IsRaised) { fail("raised run starts on a raised splitter belt that is not a high port" + at); continue; }
                     Bld before = MainPred(foot);
                     if (before == null && !(foot.Input != null && foot.Input.Kind == Kind.Splitter)) fail("raised run foot without an approach node (chain start on a ramp foot)" + at);
-                    if (before != null && DirTo(before, foot) != d1) fail("raised run is not straight from the approach node over the up-ramp (turn on a ramp, S4)" + at);
-                    if (YawDiff(foot.Yaw, Dirs.Yaw(d1)) > 1) fail("raised run foot yaw " + F(foot.Yaw) + " is not the flow direction" + at);
-                    if (Peek(preds, foot).Any(p => p.OutputToSlot > 1)) fail("raised run foot takes a side-join" + at);
+                    if (before != null && DirTo(before, foot) != d1) s4("raised run is not straight from the approach node over the up-ramp (turn on a ramp, S4)" + at);
+                    double footWant = before != null ? ChordYaw(before, b) : ChordYaw(foot, b);
+                    if (YawDiff(foot.Yaw, footWant) > 5) fail("raised run foot yaw " + F(foot.Yaw) + " is not the flow direction (chord " + F(footWant) + ")" + at);
+                    if (HasSideJoin(foot)) fail("raised run foot takes a side-join" + at);
                 }
-                if (run.Count > 1 && DirTo(b, run[1]) != d1) fail("raised run turns on its first raised node (turn on a ramp, S4)" + at);
+                if (run.Count > 1 && DirTo(b, run[1]) != d1) s4("raised run turns on its first raised node (turn on a ramp, S4)" + at);
                 if (far == null || far.Kind != Kind.Belt || far.IsRaised) { if (far != null) fail("raised run without a ground foot after it" + at); continue; }
                 Dir d2 = DirTo(last, far);
                 Bld lp = run.Count > 1 ? run[run.Count - 2] : foot;
-                if (DirTo(lp, last) != d2) fail("raised run turns on its last raised node (turn on a ramp, S4)" + at);
+                if (lp != null && DirTo(lp, last) != d2) s4("raised run turns on its last raised node (turn on a ramp, S4)" + at);
                 if (far.Output == null) fail("raised run far foot is a chain end (no approach node after it)" + at);
-                else if (far.Output.Kind == Kind.Belt && DirTo(far, far.Output) != d2) fail("raised run is not straight over the down-ramp to the far approach node (S4)" + at);
-                if (YawDiff(far.Yaw, Dirs.Yaw(d2)) > 1) fail("raised run foot yaw " + F(far.Yaw) + " is not the flow direction" + at);
-                if (Peek(preds, far).Any(p => p.OutputToSlot > 1)) fail("raised run foot takes a side-join" + at);
+                else if (far.Output.Kind == Kind.Belt && DirTo(far, far.Output) != d2) s4("raised run is not straight over the down-ramp to the far approach node (S4)" + at);
+                double farWant = far.Output != null && far.Output.Kind == Kind.Belt ? ChordYaw(last, far.Output) : ChordYaw(last, far);
+                if (YawDiff(far.Yaw, farWant) > 5) fail("raised run foot yaw " + F(far.Yaw) + " is not the flow direction (chord " + F(farWant) + ")" + at);
+                if (HasSideJoin(far)) fail("raised run foot takes a side-join" + at);
                 if (fromHigh) R.Note("raised run from a splitter high port at " + At(foot.X, foot.Y) + " (derived: z 1 -> 0.5 step, no up-ramp)");
             }
             if (bad > 10) R.Fail(bad + " raised-run errors in total");
             if (nearSorter > 0) R.Warn("UNPROVEN: " + nearSorter + " raised node(s) 0.5..1.0 tile from a sorter (proven >= 1.0 in refs\\engine-turbine-60-v2-userupgrade.txt)");
             if (raisedAt.Count > 0) R.Note("raised runs: " + runs + " run(s), " + (raisedAt.Count - high) + " node(s) at z 0.5, " + rCorners + " raised corner(s), longest " + maxRun
                 + (high > 0 ? ", " + high + " high-port node(s) at z 1" : "") + " (cell RAISED_RUN, refs\\engine-turbine-60-v2-userupgrade.txt)");
+            if (offGrid + airStarts + airEnds + stacked > 0) R.Note("raised runs (drawn forms, refs\\patterns\\p-sheet-001.txt): " + airStarts + " icon tail(s) in the air, " + airEnds
+                + " dead end(s) in the air, " + stacked + " stacked tail/end tile(s), " + offGrid + " node(s) off the grid");
         }
 
         bool IsSplitterNeighbour(Bld b)
@@ -691,7 +740,13 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                 else if (dout.HasValue) want = Dirs.Yaw(dout.Value);
                 else if (din.HasValue) want = Dirs.Yaw(din.Value);
                 else continue;
-                if (YawDiff(b.Yaw, want) > 5 && bad++ < 10) R.Fail("belt yaw " + F(b.Yaw) + " but flow says " + F(want) + ": " + b);
+                // PATTERNS: the game writes a belt node's yaw as the direction of the chord from its predecessor to its
+                // successor (refs\patterns\p-sheet-001.txt: #294 (11.892,25.001) yaw 300.03 between (12.795,25) and (11,26)
+                // = chord 299.1; #293 (11,26) yaw 336.6, chord 336.0; #477 (48,41,1) yaw 13.9, chord 14.0). For grid
+                // corners the chord is the old bisector, so either form is accepted.
+                Bld prevN = p ?? (b.Input != null && b.Input.Kind == Kind.Splitter ? b.Input : null), nextN = b.Output;
+                double chord = prevN != null && nextN != null ? ChordYaw(prevN, nextN) : prevN != null ? ChordYaw(prevN, b) : nextN != null ? ChordYaw(b, nextN) : want;
+                if (YawDiff(b.Yaw, want) > 5 && YawDiff(b.Yaw, chord) > 5 && bad++ < 10) R.Fail("belt yaw " + F(b.Yaw) + " but flow says " + F(want) + " (chord " + F(chord) + "): " + b);
             }
             if (bad > 10) R.Fail(bad + " belt yaw errors in total");
         }
@@ -795,7 +850,9 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                 // yaw points from start to end
                 double vx = s.X2 - s.X, vy = s.Y2 - s.Y;
                 double dirYaw = Dirs.Norm(Math.Atan2(vx, vy) * 180.0 / Math.PI);
-                if (YawDiff(s.Yaw, dirYaw) > 5) R.Fail("sorter yaw " + F(s.Yaw) + " does not match its direction " + F(dirYaw) + at);
+                // the game writes the yaw of the slot faces, the line may skew up to F11 (24 deg): refs\patterns\p-sheet-001.txt
+                // #49 (51.175,22.206)->(48.908,21.796) yaw 270.08, line 259.7 (10.3 deg)
+                if (YawDiff(s.Yaw, dirYaw) > GameData.SorterMaxSkewDeg) R.Fail("sorter yaw " + F(s.Yaw) + " skews " + F(YawDiff(s.Yaw, dirYaw)) + " deg from its line " + F(dirYaw) + " (game F11 max " + F(GameData.SorterMaxSkewDeg) + ")" + at);
 
                 // does not pass through a third building
                 foreach (Bld m in obstacles)
@@ -1259,6 +1316,24 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                 int tail = 0; Bld n = b;
                 while (n != null && Peek(picksAt, n).Count == 0 && Peek(dropsAt, n).Count == 0) { tail++; n = MainPred(n); }
                 if (tail == 0) continue;   // ends on a drop tile: output flow checks report it
+                // PATTERNS: the user's drawn rows refs\patterns\p08-asm-row-3in.txt / p09-asm-row-4in.txt end every input
+                // lane at y 18 = the far edge of the last machine (centre (4,17), footprint y 16..18) = the top edge of the
+                // blueprint, 1-2 belts past the last pickup (L2 pickup y 17, L1 pickup y 16): a stub that stays inside the
+                // last machine's footprint span AND ends on the block edge (all lanes of the row flush with its end) is
+                // accepted; a stub inside the block or beyond the last machine is still an error (refs\engine-coil-360.txt
+                // rule: lanes end at the last pickup).
+                if (n != null && Peek(picksAt, n).Count > 0)
+                {
+                    Rect span = Rect.Empty;
+                    foreach (Bld s in Peek(picksAt, n)) if (s.Output != null) span = span.Union(fp.TileRect(s.Output));
+                    if (bounds.IsEmpty) bounds = L.Bounds();
+                    Dir flow = FlowOf(n);
+                    bool ns = flow == Dir.N || flow == Dir.S;
+                    bool flush = !span.IsEmpty && (flow == Dir.N ? b.TileY == bounds.Y1 : flow == Dir.S ? b.TileY == bounds.Y0 : flow == Dir.E ? b.TileX == bounds.X1 : b.TileX == bounds.X0);
+                    for (Bld m = b; flush && m != n; m = MainPred(m))
+                        flush = ns ? m.TileY >= span.Y0 && m.TileY <= span.Y1 : m.TileX >= span.X0 && m.TileX <= span.X1;
+                    if (flush) { flushStubs++; continue; }
+                }
                 R.Fail("input lane " + Lane(b) + " runs " + tail + " belt(s) beyond its last pickup, ending at " + At(b.X, b.Y)
                     + (n == null ? " (no sorter on the lane at all)" : ""));
             }
@@ -1272,8 +1347,11 @@ public partial class Validator   // FINALCELL HOOK: partial, see engine/FinalCel
                 }
                 if (plan.TargetItem != 0 && !L.Ports.Any(p => p.Kind == PortKind.Out && p.Item == plan.TargetItem)) R.Fail("target " + N(plan.TargetItem) + " has no block output port");
             }
-            R.Note("belts: " + belts.Count + " tiles, " + starts.Count + " chain starts, " + ends.Count + " chain ends; block ports " + nIn + " in, " + nOut + " out");
+            R.Note("belts: " + belts.Count + " tiles, " + starts.Count + " chain starts, " + ends.Count + " chain ends; block ports " + nIn + " in, " + nOut + " out"
+                + (flushStubs > 0 ? "; " + flushStubs + " input lane(s) end flush with the last machine and the block edge (refs\\patterns\\p08-asm-row-3in.txt)" : ""));
         }
+        int flushStubs;
+        Rect bounds = Rect.Empty;
 
         // ---------------------------------------------------------------- user rule 5: input-belt icons
         void Icons()
