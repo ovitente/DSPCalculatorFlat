@@ -24,16 +24,22 @@
 //   flowing east, with the raised feed belt #25/#18/#26/#49/#22 (5.013,2..6,1.002) running north across their backs.
 //   Passing through is only seen in 0.9.x files (no 0.10.x file has it; unverified for 0.10.35).
 //
-// Layout cell COATER (built by MachineRow in the row's Flow-N frame, origin = first machine):
+// Layout cell COATER (built by MachineRow / DoubleRow in the row's Flow-N frame, origin = first machine), shaped as the
+// user drew it on refs\patterns\p-sheet-001.txt x58..68 (docs\patterns-design.md P01/P02; floorplan-design.md "coaters"):
 //   c = (lowest first-pickup tile of the coated lanes) - 2  (coater body reaches +1.52 tiles forward: the pickup tile
-//       c + 2 is clear of it, 2.51 m > 1.9 + 0.23 m);
-//   coater (x, c) yaw = flow on every coated input lane x;
-//   feed row y = c - 1 at z 1 (one tile behind every coater) from the ramp column xr (one tile outside side A) across
-//   all coated lanes to the outermost coated lane of side B (chain end there);
-//   ramp column xr: approach/port (xr, c-4) -> ground foot (xr, c-3) -> (xr, c-2) z 0.5 -> raised corner (xr, c-1) z 1
-//   (L1.txt chain #68 -> #67 -> #70);
-//   coated lanes start at c - 2 (a straight belt before the tile under the feed), external lanes at c - 4 so their
-//   icon tail stays the first belt and sits on the input edge next to the proliferator port.
+//       c + 2 is clear of it, 2.51 m > 1.9 + 0.23 m); "as close to the input edge as the ramp allows";
+//   coater (x, c) yaw = flow on every coated input lane x, all in ONE row (sheet: coaters #0..#3 at y5 on x61/62/64/65);
+//   coated lanes with a tail start at c - CoaterRowOffset (= c - 5: sheet tails y0, coaters y5), so the tail sits on the
+//   input edge next to the proliferator tail; coated lanes without a tail start at c - 2 (a straight belt before the
+//   tile under the feed);
+//   ramp column xr NEXT TO the bundle of coated lanes: one tile on the -x side of the lowest coated lane (sheet: x60
+//   west of the bundle x61..65), else one tile on the +x side of the highest, else (both taken by other lanes) one tile
+//   outside all lanes of the row, -x side first - the shape before 2026-11-08 ("ramp column outside side A");
+//   ramp column profile (sheet #96..#92): tail/port (xr, c-5) z 0 with the proliferator icon -> foot (xr, c-4) z 0 ->
+//   (xr, c-3) z 0.5 -> (xr, c-2) z 1 straight -> corner (xr, c-1) z 1 (L1.txt #68 -> #67 -> #70 had no straight z 1
+//   node before the corner; the Validator accepts both);
+//   feed row y = c - 1 at z 1 (one tile behind every coater, sheet #91..#87 at y4) from the corner across all coated
+//   lanes, chain end (dead end) over the far coated lane (sheet: end at x65 = the last coater).
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -62,6 +68,10 @@ public static class Coaters
     /// #87..#91) has the feed row at y 4.013 / 4.014 and x 60.995 / 62.995, L1.txt #80 at y 7.987 (header above). The old
     /// 0.01 rejected the drawing.
     public const double FeedGridTol = 0.02;
+    /// Coater row is this many tiles above the input-edge tails of the coated lanes and of the proliferator lane: the
+    /// user's drawn coater block refs\patterns\p-sheet-001.txt x58..68 has the tails at y0 (#96 proliferator, #119 / #141
+    /// / #163 / #186 inputs) and the coaters at y5 (#0..#3); the ramp z 0 / 0.5 / 1 takes y1..3 and the corner y4.
+    public const int CoaterRowOffset = 5;
 
     // ---------------------------------------------------------------- game numbers
     /// Sprays per proliferator item: ItemProto.HpMax of the game's ItemProtoSet (analysis\raw-protos.json, extracted
@@ -160,23 +170,40 @@ public static class Coaters
 
     public static bool Coats(RowSpec spec, int item) { return spec != null && spec.CoatItems != null && spec.CoatItems.Contains(item); }
 
-    /// Lane start of an input lane in a coated row (see the cell above).
+    /// Lane start of an input lane in a coated row (see the cell above): a tail lane starts CoaterRowOffset below the
+    /// coater row (on the input edge, level with the proliferator tail), any other coated lane one straight belt before
+    /// the tile under the feed.
     public static int LaneStart(RowSpec spec, int item, bool tail, int yStart, int coatY)
     {
         if (coatY == int.MinValue || !Coats(spec, item)) return yStart;
-        return Math.Min(yStart, tail ? coatY - 4 : coatY - 2);
+        return Math.Min(yStart, tail ? coatY - CoaterRowOffset : coatY - 2);
     }
 
-    /// Adds the coaters, the feed chain and the feed port "coat:<item>" to a MachineRow fragment (Flow-N frame, before the
-    /// fragment is rotated). lanes: lane x -> belts (index = y - laneStart[x]); laneItem: input lane x -> item;
-    /// sideSign: +1 when side A is east (x > 0), -1 when side A is west.
+    /// Ramp column of the proliferator lane (cell above): next to the bundle of coated lanes, -x side first, then +x;
+    /// when other lanes take both, outside all lanes of the row (-x first). Returns the chosen x; rampSign = -1 when the
+    /// column lies on the -x side of the bundle (the feed then runs towards +x), +1 otherwise.
+    public static int RampColumn(ICollection<int> laneXs, ICollection<int> coatedXs, out int rampSign)
+    {
+        int lo = coatedXs.Min(), hi = coatedXs.Max();
+        int[] candidates = { lo - 1, hi + 1, laneXs.Min() - 1, laneXs.Max() + 1 };
+        int[] signs = { -1, 1, -1, 1 };
+        for (int i = 0; i < candidates.Length; i++)
+            if (!laneXs.Contains(candidates[i])) { rampSign = signs[i]; return candidates[i]; }
+        rampSign = -1;
+        return laneXs.Min() - 1;   // unreachable: the outside columns are never lanes
+    }
+
+    /// Adds the coaters, the feed chain and the feed port "coat:<item>" to a MachineRow / DoubleRow fragment (Flow-N
+    /// frame, before the fragment is rotated), in the drawn shape of the cell above. lanes: lane x -> belts (index =
+    /// y - laneStart[x]); laneItem: input lane x -> item; sideSign: +1 when side A is east (x > 0), -1 when side A is
+    /// west (kept for the callers; the ramp column follows the bundle, not side A, since 2026-11-08).
     public static void AddToRow(RowSpec spec, Fragment f, int coatY, Dictionary<int, List<Bld>> lanes, Dictionary<int, int> laneStart,
         Dictionary<int, int> laneItem, int sideSign)
     {
         if (coatY == int.MinValue) return;
         var coated = laneItem.Where(kv => Coats(spec, kv.Value)).Select(kv => kv.Key).ToList();
         if (coated.Count == 0) return;
-        int c = coatY, feedY = c - 1;
+        int c = coatY, feedY = c - 1, tailY = c - CoaterRowOffset;
         // coaters on every coated lane (yaw = lane flow, N in this frame)
         foreach (int x in coated)
         {
@@ -189,18 +216,19 @@ public static class Coaters
             cb.Chain = lane[idx].Chain;
             f.Add(cb);
         }
-        // ramp column one tile outside the outermost lane of side A; feed row from there across to the far coated lane
-        int xr = sideSign > 0 ? lanes.Keys.Max() + 1 : lanes.Keys.Min() - 1;
-        int xEnd = sideSign > 0 ? coated.Min() : coated.Max();
-        Dir across = sideSign > 0 ? Dir.W : Dir.E;
+        // ramp column next to the bundle of coated lanes; feed row from its corner across to the far coated lane
+        int rampSign;
+        int xr = RampColumn(lanes.Keys, coated, out rampSign);
+        int xEnd = rampSign < 0 ? coated.Max() : coated.Min();
         string chain = ChainPrefix + spec.Name;
         int prolif = spec.ProliferatorItem;
         var tiles = new List<double[]>();   // x, y, z
-        tiles.Add(new double[] { xr, c - 4, 0 });           // approach (port)
-        tiles.Add(new double[] { xr, c - 3, 0 });           // ground foot
-        tiles.Add(new double[] { xr, c - 2, RampZ });       // ramp
+        tiles.Add(new double[] { xr, tailY, 0 });           // tail (port, icon) on the input edge
+        tiles.Add(new double[] { xr, c - 4, 0 });           // ground foot
+        tiles.Add(new double[] { xr, c - 3, RampZ });       // ramp
+        tiles.Add(new double[] { xr, c - 2, FeedZ });       // first z 1 node, straight
         tiles.Add(new double[] { xr, feedY, FeedZ });       // raised corner N -> across
-        for (int x = xr - sideSign; sideSign > 0 ? x >= xEnd : x <= xEnd; x -= sideSign) tiles.Add(new double[] { x, feedY, FeedZ });
+        for (int x = xr - rampSign; rampSign < 0 ? x <= xEnd : x >= xEnd; x -= rampSign) tiles.Add(new double[] { x, feedY, FeedZ });
         var made = new List<Bld>();
         for (int i = 0; i < tiles.Count; i++)
         {
@@ -209,15 +237,18 @@ public static class Coaters
             Bld b = Bld.Belt(spec.BeltItem, tiles[i][0], tiles[i][1], BeltGeo.CornerYaw(din, dout), prolif, chain);
             b.Z = b.Z2 = tiles[i][2];
             b.Cell = FeedCell;
-            b.Role = chain + (i == 0 ? " port" : i == 1 ? " foot" : i == 2 ? " ramp" : " feed");
+            b.Role = chain + (i == 0 ? " tail" : i == 1 ? " foot" : i == 2 ? " ramp" : " feed");
             f.Add(b);
             if (made.Count > 0) Layout.Link(made[made.Count - 1], b, 1);
             made.Add(b);
         }
         Layout.Link(made[made.Count - 1], null, 0);
+        if (spec.LaneIcons) made[0].Parameters = new[] { prolif, 0 };   // rule 5: the tail carries the proliferator icon (sheet #96 [1142,0])
         double rate = ProliferatorPerMin(spec.Data, prolif, coated.Select(x => LaneRate(spec, laneItem[x])));
-        f.AddPort(new Port { Name = PortPrefix + prolif, Kind = PortKind.In, X = xr, Y = c - 4, Dir = Dir.N, Item = prolif, Rate = rate,
+        f.AddPort(new Port { Name = PortPrefix + prolif, Kind = PortKind.In, X = xr, Y = tailY, Dir = Dir.N, Item = prolif, Rate = rate,
             Belt = made[0], Chain = chain });
+        spec.Notes.Add("coater feed ramp in column x " + xr.ToString(CultureInfo.InvariantCulture) + " (" + (rampSign < 0 ? "-x" : "+x")
+            + " side of the coated lanes " + string.Join(",", coated.OrderBy(x => x).Select(x => x.ToString(CultureInfo.InvariantCulture)).ToArray()) + ", p-sheet-001.txt x58..68 shape)");
         spec.Notes.Add(coated.Count + " spray coater(s), proliferator " + prolif + " " + rate.ToString("0.##", CultureInfo.InvariantCulture)
             + "/min (" + Sprays(spec.Data, prolif) + " sprays per item)");
         if (coated.Count > 1) spec.Notes.Add("coater feed passes through " + (coated.Count - 1) + " coater(s) (pass-through feed proven in game 0.9.x files only)");

@@ -237,8 +237,14 @@ public static partial class SelfTest
         var cy = g.Blds.Where(Coaters.IsCoater).Select(c => c.TileY).Distinct().ToList();
         var sheetCoaters = sheet.All.Where(b => Coaters.IsCoater(b) && b.TileX >= 58 && b.TileX <= 68).ToList();
         e.Check(sheetCoaters.Count == 4 && sheetCoaters.All(c => c.TileY == 5), "sheet coaters: " + sheetCoaters.Count + " at y " + string.Join(",", sheetCoaters.Select(c => c.TileY.ToString(CultureInfo.InvariantCulture)).Distinct().ToArray()));
+        // COATERS HOOK: the engine's lanes stay straight (x58/59/67/68, no bundle at x61..65), so the comparison is relative:
+        // the sheet's shape (coaters at tail y + 5, ramp column next to the coated lanes on the -x side = x60 for the bundle
+        // x61..65, z 0/0/0.5/1 up the column and the corner at y4, feed z 1 behind the coaters, dead end after the last one)
+        // must hold for the engine's coated lanes (ramp x57 for x58..68) - SelfTestCoaters.cs CheckDrawnCoaterShape
+        string rampSide = CheckDrawnCoaterShape(e, g.Blds, Coaters.ProliferatorMk1, "coil block coaters");   // COATERS HOOK
+        e.Check(rampSide == "-x", "coil block ramp column on the " + rampSide + " side of the coated lanes, sheet: -x (x60 west of x61..65)");   // COATERS HOOK
         Console.WriteLine("      sheet x58..68: columns x61/x65 pitch 4, L2 magnet x58/x68 (lat 0, slots 10/4), L1 copper x59/x67 (lat -1, slots 9/5), out x63; " + matched
-            + " sorters within 0.04; engine coaters at y " + string.Join(",", cy.Select(y => y.ToString(CultureInfo.InvariantCulture)).ToArray()) + " (sheet frame), sheet coaters at y5 on the bundled lanes x61/62/64/65");
+            + " sorters within 0.04; engine coaters at y " + string.Join(",", cy.Select(y => y.ToString(CultureInfo.InvariantCulture)).ToArray()) + " (sheet frame), sheet coaters at y5 on the bundled lanes x61/62/64/65; ramp column " + rampSide + " side as drawn");   // COATERS HOOK
         // full validation: the sheet itself runs magnet, copper, copper, magnet along the edge (tails x61 magnet, x62 copper,
         // x64 copper, x65 magnet); rule 10 only warns about it since 2026-11-08
         var input = new PlanInput { TargetItemId = Ids.MagneticCoil, TargetPerMin = 480 };
