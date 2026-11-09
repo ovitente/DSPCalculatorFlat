@@ -108,6 +108,7 @@ public static class Floorplan
         FinalCell.Choice cellChoice; RI cellRow, cellDed;
         int[] faces = new int[3], dedLanes = new int[2];
         int finalIndex = -1;
+        readonly List<int[]> laneCycles = new List<int[]>();   // adjacent vertical x pairs behind a lane-order cycle (MakeConnections -> Spread)
         readonly Dictionary<int, bool> force;
         bool? ForceOf(RI r) { bool v; return force != null && force.TryGetValue(r.StepIndex * 100 + r.Part, out v) ? v : (bool?)null; }
         readonly int quarters;   // quarter turns from the canonical frame to the real input edge (as in Composer.Attempt)
@@ -151,6 +152,17 @@ public static class Floorplan
         /// geometry) moves the eastern of the two columns (and everything east of it) apart. False = nothing to move.
         bool Spread(List<Col> order)
         {
+            // two band lanes that each must run above the other: move the adjacent verticals that cause it apart by one tile
+            foreach (int[] pair in laneCycles)
+            {
+                int ka = order.FindIndex(c => c.Box.X0 <= pair[0] && pair[0] <= c.Box.X1), kb = order.FindIndex(c => c.Box.X0 <= pair[1] && pair[1] <= c.Box.X1);
+                int boundary = Math.Max(ka, kb);
+                if (ka == kb || ka < 0 || kb < 0 || boundary < 1 || (order[0].Final && boundary == 1 && Aligned(order[0], order[1]))) continue;
+                order[boundary - 1].GapAfter += 1;
+                for (int k = boundary; k < order.Count; k++) Translate(order[k], 1, 0);
+                Note("gap: 1 tile east of column " + (boundary - 1) + " (two band lanes could not be ordered: verticals x" + pair[0] + " / x" + pair[1] + ")");
+                return true;
+            }
             foreach (var g in fp.Connections.Where(c => c.Route == FpRoute.Band && c.TailOf == null).GroupBy(c => c.Source))
             {
                 var ts = g.OrderBy(c => Math.Abs(c.Target.PrevX - g.Key.NextX)).ToList();
@@ -329,6 +341,17 @@ public static class Floorplan
         }
 
         // ---------------------------------------------------------------- row fragments
+        /// Lane order of a row: a 3+ input row's second and third lanes are swapped when that puts the lane continued from the stacked producer
+        /// next to the output lane (side A at L2, output L3) and their per-craft counts are equal (the user's lane priority): the band-fed lane
+        /// then stays away from the output lane, which it could not cross (useredit3 motor: gear x=20 beside the output lane x=21).
+        T[] RowItems<T>(RI r, int straightItem, T[] values)
+        {
+            T[] res = (T[])values.Clone();
+            int k = straightItem != 0 ? Array.IndexOf(r.InItems, straightItem) : -1;
+            if (k == 2 && res.Length >= 3 && r.Step.Recipe.InCount(r.InItems[1]) == r.Step.Recipe.InCount(r.InItems[2])) { T t = res[1]; res[1] = res[2]; res[2] = t; }
+            return res;
+        }
+
         /// Row fragment. straightItem = the lane continued from a stacked producer (flows N); every other lane fed inside the
         /// block comes from the north band and flows S (docs\floorplan-design.md item 5); block inputs keep a N tail. A
         /// coated lane stays N (spray coaters are not supported on reversed lanes).
@@ -336,15 +359,16 @@ public static class Floorplan
         {
             if (r.Final) return BuildFinal(r);
             bool coat = Coaters.Coated(r.Step) && spec.ProliferatorItem != 0;
-            var flows = new Dir?[r.InItems.Length];
+            int[] laneItems = RowItems(r, straightItem, r.InItems);
+            var flows = new Dir?[laneItems.Length];
             for (int i = 0; i < flows.Length; i++)
-                flows[i] = !coat && !r.Step.IsExternal(plan, r.InItems[i]) && r.InItems[i] != straightItem ? Dir.S : Dir.N;
+                flows[i] = !coat && !r.Step.IsExternal(plan, laneItems[i]) && laneItems[i] != straightItem ? Dir.S : Dir.N;
             var rs = new RowSpec
             {
                 Name = r.Name, MachineItem = r.Step.MachineItem, RecipeId = r.Step.Recipe.Id, Count = r.Count, Pitch = 0,
-                InputItems = (int[])r.InItems.Clone(), InputRates = (double[])r.InRates.Clone(),
+                InputItems = RowItems(r, straightItem, r.InItems), InputRates = RowItems(r, straightItem, r.InRates),
                 OutputItem = r.Step.Item, OutputRate = r.OutRate, Flow = Dir.N, Mirror = mirror,
-                BeltItem = spec.Tiers.Belt, SorterItem = spec.Tiers.Sorter, OutputLength = 0,
+                BeltItem = spec.Tiers.Belt, SorterItem = spec.Tiers.Sorter, OutputLength = laneItems.Length == 3 && straightItem != 0 && laneItems[1] == straightItem ? 2 : 0,
                 LaneIcons = false,
                 TailItems = r.InItems.Where(it => r.Step.IsExternal(plan, it)).ToArray(),
                 Data = gd,
@@ -790,14 +814,35 @@ public static class Floorplan
             }
             var threeWay = new HashSet<int>(band.Where(c => c.TailOf == null).GroupBy(c => c.Source)
                 .Where(g => g.Count() == 3 && g.Any(c => c.Target.PrevX < g.Key.NextX) && g.Any(c => c.Target.PrevX > g.Key.NextX)).Select(g => g.Key.Item));
-            var guarded = new HashSet<long>();   // (a,b): a above b with one free row between
+            var gaps = new Dictionary<long, int>();   // (a,b) -> a above b with at least this many rows (2 = one free row, 3 = the belt under a splitter is bridgeable: two rows below it are not plain chain tiles)
+            Func<int, int, long> gk = (a, b) => ((long)a << 32) | (uint)b;
+            var crossOnly = new HashSet<long>();
             foreach (int f in forkX.Keys)
                 foreach (int fx in forkX[f])
                     foreach (int j in span.Keys.Where(j => j != f))
                     {
-                        if (ends[j].Contains(fx - 1) || ends[j].Contains(fx + 1)) { mustAbove[f].Add(j); guarded.Add(((long)f << 32) | (uint)j); }
-                        else if (fx >= span[j][0] && fx <= span[j][1] && !ends[j].Contains(fx)) { mustAbove[j].Add(f); guarded.Add(((long)j << 32) | (uint)f); }
+                        bool crosses = fx >= span[j][0] && fx <= span[j][1] && !ends[j].Contains(fx);
+                        if (ends[j].Contains(fx - 1) || ends[j].Contains(fx + 1)) { mustAbove[f].Add(j); gaps[gk(f, j)] = crosses ? 3 : 2; }
+                        else if (crosses) { mustAbove[j].Add(f); gaps[gk(j, f)] = 2; crossOnly.Add(gk(j, f)); }
                     }
+            // two forks each crossing the other's splitter column: the wider item goes above, and the other crosses its rise / descent 3 rows below the splitter
+            // (an item that must run above the fork only because it crosses the fork column may instead cross 3 rows below the splitter)
+            foreach (long k in crossOnly.ToList())
+            {
+                int a = (int)(k >> 32), b = (int)(k & 0xffffffffL);
+                if (!mustAbove[b].Contains(a)) continue;
+                int winner, loser;
+                if (crossOnly.Contains(gk(b, a))) { winner = span[a][1] - span[a][0] >= span[b][1] - span[b][0] ? a : b; loser = winner == a ? b : a; }
+                else { winner = b; loser = a; }
+                mustAbove[loser].Remove(winner); gaps.Remove(gk(loser, winner)); crossOnly.Remove(gk(loser, winner));
+                gaps[gk(winner, loser)] = 3; mustAbove[winner].Add(loser);
+            }
+            laneCycles.Clear();
+            foreach (int i in span.Keys)
+                foreach (int j in span.Keys.Where(j => j > i && mustAbove[i].Contains(j) && mustAbove[j].Contains(i)))
+                {
+                    foreach (int x in ends[j]) foreach (int e in ends[i]) if (Math.Abs(x - e) == 1) laneCycles.Add(new[] { Math.Min(x, e), Math.Max(x, e) });
+                }
             // topological by mustAbove, ties: narrow spans first (enclosed -> lower); two items whose spans leave at least one free tile
             // between them share a row
             var laneOf = new Dictionary<int, int>();
@@ -809,7 +854,7 @@ public static class Floorplan
                 if (it == 0) { it = remaining[0]; Note("band: lane order constraints for " + N(it) + " form a cycle (a crossing next to a corner may be refused)"); }
                 remaining.Remove(it);
                 int[] s = span[it];
-                int minLane = mustAbove[it].Where(j => laneOf.ContainsKey(j)).Select(j => laneOf[j] + (guarded.Contains(((long)it << 32) | (uint)j) ? 2 : 1)).DefaultIfEmpty(0).Max();
+                int minLane = mustAbove[it].Where(j => laneOf.ContainsKey(j)).Select(j => { int g; return laneOf[j] + (gaps.TryGetValue(gk(it, j), out g) ? g : 1); }).DefaultIfEmpty(0).Max();
                 int rows = threeWay.Contains(it) ? 3 : 1;   // a 3-way fork takes this row and the two above it (branch N, row yb + 2)
                 Func<int, bool> free = l => l < laneSpans.Count && laneSpans[l].All(o => o[1] + 2 <= s[0] || s[1] + 2 <= o[0]);
                 int lane = -1;

@@ -29,6 +29,7 @@ public static class FloorplanComposer
         // mirrored or not, one at a time (hill climbing on the number of problems, a fixed number of tries, deterministic)
         var force = new Dictionary<int, bool>();
         var bestNotes = new List<string>();
+        var trace = new List<string>();
         Layout best = Attempt(gd, spec, plan, force, bestNotes, quarters);
         int bestScore = Score(best), tries = 1;
         List<int> keys = RowKeys(gd, spec, plan);
@@ -47,6 +48,7 @@ public static class FloorplanComposer
                     Layout l = Attempt(gd, spec, plan, force, n, quarters);
                     tries++;
                     int s = Score(l);
+                    trace.Add("floorplan attempt " + tries + ": row " + key + " mirror " + v + " -> " + s + " problem(s)" + (s > 0 ? ": " + l.Errors[0] : ""));
                     if (s < bestScore) { best = l; bestScore = s; bestNotes = n; improved = true; }
                     else { if (had) force[key] = old; else force.Remove(key); }
                     if (bestScore == 0 || tries >= MaxTries) break;
@@ -55,13 +57,15 @@ public static class FloorplanComposer
             }
         }
         notes.AddRange(bestNotes);
+        notes.AddRange(trace.Take(40));
         if (tries > 1) notes.Add("floorplan composer: " + tries + " attempts (row mirrors forced: " + force.Count + "), " + bestScore + " problem(s) left");
         return best;
     }
 
     const int MaxTries = 80;
 
-    static int Score(Layout l) { return l.Errors.Count; }
+    /// Structural failures (the floorplan itself could not place something) weigh far more than a lane Bands could not route.
+    static int Score(Layout l) { return l.Errors.Sum(e => e.StartsWith("bands:", StringComparison.Ordinal) || e.StartsWith("floorplan validator", StringComparison.Ordinal) ? 1 : 1000); }
 
     static List<int> RowKeys(GameData gd, BlockSpec spec, ProductionPlan plan)
     {
