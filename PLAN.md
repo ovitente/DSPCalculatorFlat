@@ -112,3 +112,13 @@ User drawings: `p08-asm-row-3in`, `p09-asm-row-4in`, `p12-input-edge-comb`, one 
   (EdgeBus territory). Next: drive the composer from patterns (rows + double rows + comb + bundle bridges) instead
   of the gap/mode search; in-game test of a generated 3-input row.
 - Selftest full: 101 pass / 0 fail / 1 skip (missing user file).
+
+## Status (2026-11-09): floorplan composer
+
+Pattern-driven composer (`engine/Floorplan.cs`, `Bands.cs`, `FloorplanComposer.cs`; design `docs/floorplan-design.md`),
+on by default (`EngineTuning.Floorplan`) with a fallback to the search composer; `EngineResult.Notes` says which one ran.
+All 5 fixtures pass the Validator and export, floorplan only (WxH / buildings): coil 360 11x50 / 221, motor 120 24x43 / 396,
+turbine 60 30x45 / 583, missile set 90 37x75 / 1105, turret 7.5 42x34 / 641 (user's edit 40x26 / 565, search 48x30 / 780).
+Column order and topology of the turret match the user's edit. Open: nothing pasted in game yet; flat band rows instead of the
+z-stacked bus (rules 2/3); tall blocks where a long column is stacked (coil 50, missile 75); motor rows use a derived output
+cell (L2 on the gear side), not the drawn P08 L3 cell. Selftest full: 122 pass / 0 fail / 1 skip (missing user file).
