@@ -19,9 +19,9 @@
 //   5. links     Straight (stacked / aligned), MachineToMachine (absorbed feeder), Comb (block inputs: tails on the south
 //                edge, pitch 1 per column), Band (everything else: one band lane per item above the columns; enclosed spans
 //                get the lower lane).
-// Lane flow: a lane fed from the north band must flow S inside its row. RowSpec has no per-lane flow in this branch yet
-// (RowSpec.LaneFlows is added by the laneflow agent): rows are built with Flow N and every connection records the flow the
-// target lane needs in FpConnection.TargetFlow; the assembly rebuilds the rows with those flows.
+// Lane flow: a lane fed from the north band flows S inside its row (RowSpec.InputFlows); the lane continued from a stacked producer and
+// block input lanes flow N. FpConnection.TargetFlow records the target port flow; a producer stacked under its consumer gets its band lanes
+// from the consumer lane tail (FpConnection.TailOf).
 // Pure model code: no I/O, no console, no game DLL. C# 5.
 using System;
 using System.Collections.Generic;
@@ -225,9 +225,10 @@ public static class Floorplan
                 if (s.Machines < 1) { Err(s.Recipe.Name + " has no machines (no row)"); continue; }
                 double outRate = s.Outputs.Count > 0 ? s.Outputs[0].Rate : s.MaxOutputRate;
                 int parts = Math.Max(1, Math.Min(s.Machines, LanesNeeded(s)));
+                int[] counts = SplitCounts(si, s, parts, outRate);
                 for (int p = 0; p < parts; p++)
                 {
-                    int cnt = s.Machines / parts + (p < s.Machines % parts ? 1 : 0);
+                    int cnt = counts[p];
                     double share = cnt / (double)s.Machines;
                     var r = new RI
                     {
@@ -242,8 +243,34 @@ public static class Floorplan
                     if (r.OutRate > beltRate + 1e-9) Err("row " + r.Name + " output " + F(r.OutRate) + "/min exceeds the belt rate");
                     rows.Add(r);
                 }
-                if (parts > 1) Note("rows: " + s.Recipe.Name + " split into " + parts + " lanes of " + string.Join("/", Enumerable.Range(0, parts).Select(p => I(s.Machines / parts + (p < s.Machines % parts ? 1 : 0))).ToArray()) + " machines (belt rate / machines per lane)");
+                if (parts > 1) Note("rows: " + s.Recipe.Name + " split into " + parts + " lanes of " + string.Join("/", counts.Select(c => I(c)).ToArray()) + " machines (belt rate / machines per lane)");
             }
+        }
+
+        /// Machines per lane part. Equal parts by default; when the consumer steps' demands pack into the parts (first fit decreasing under the belt rate,
+        /// each part big enough for its largest consumer) the parts follow that packing, so that a consumer lane larger than an equal part (missile 90:
+        /// 540/min copper from 2 x 450/min) gets a single producer row and no side-join (Bands cannot lay a side-join off a fork).
+        int[] SplitCounts(int si, Step s, int parts, double outRate)
+        {
+            int[] equal = Enumerable.Range(0, parts).Select(p => s.Machines / parts + (p < s.Machines % parts ? 1 : 0)).ToArray();
+            if (parts < 2) return equal;
+            double perMachine = outRate / s.Machines;
+            int rowCap = Lanes.MachinesPerLane(gd, s, beltRate);
+            var demands = s.ConsumerSteps.Distinct().Where(ci => ci >= 0 && ci < plan.Steps.Count && !plan.Steps[ci].IsExternal(plan, s.Item))
+                .SelectMany(ci => plan.Steps[ci].Inputs.Where(x => x.Item == s.Item).Select(x => x.Rate)).OrderByDescending(v => v).ToList();
+            double cap = Math.Min(beltRate, rowCap == int.MaxValue ? beltRate : rowCap * perMachine);
+            var bins = new double[parts];
+            foreach (double d in demands)
+            {
+                int b = Enumerable.Range(0, parts).Where(i => bins[i] + d <= cap + 1e-9).DefaultIfEmpty(-1).First();
+                if (b < 0) return equal;
+                bins[b] += d;
+            }
+            if (bins.Any(v => v <= 0)) return equal;
+            int[] counts = bins.Select(v => (int)Math.Ceiling(v / perMachine - 1e-9)).ToArray();
+            if (counts.Sum() > s.Machines) return equal;
+            for (int i = 0, rest = s.Machines - counts.Sum(); rest > 0; rest--, i = (i + 1) % parts) counts[i]++;   // spare machines (rounding): spread them
+            return counts.Max() <= rowCap ? counts : equal;
         }
 
         List<RI> RowsOf(int stepIndex) { return rows.Where(r => r.StepIndex == stepIndex).ToList(); }
@@ -266,6 +293,21 @@ public static class Floorplan
                 if (cons.Count == 0) continue;   // block output (or every consumer takes it externally)
                 if (s.Item == plan.TargetItem) Err("target item " + N(s.Item) + " is also consumed inside the block; not supported");
                 int k = prods.Count, m = cons.Count;
+                if (k > 1 && k <= m)
+                {
+                    // several producer rows, at least as many consumer rows: largest demand first, each from the row with the most capacity left
+                    // (a consumer lane fed from two rows that also feed others would need a side-join off a fork, which Bands does not lay)
+                    var left = prods.ToDictionary(p => p, p => p.OutRate);
+                    foreach (RI c in cons.OrderByDescending(c => c.InRates[Array.IndexOf(c.InItems, s.Item)]))
+                    {
+                        double need = c.InRates[Array.IndexOf(c.InItems, s.Item)];
+                        RI best = prods.OrderByDescending(p => left[p]).First();
+                        if (need > left[best] + 1e-6) Err(c.Name + " needs " + F(need) + "/min of " + N(s.Item) + ", more than one producer row can give (" + F(left[best]) + "/min left); a lane fed from two rows that also feed other consumers is not supported");
+                        left[best] -= need;
+                        edges.Add(new Ed { From = best, To = c, Item = s.Item, Rate = need });
+                    }
+                    continue;
+                }
                 // pairing as in Composer.Attempt.MakeEdges (parallel copies): consumer j <- producer j % k, or several producers share one consumer
                 for (int j = 0; j < m; j++)
                 {
@@ -770,12 +812,15 @@ public static class Floorplan
                     FpConnection host = conns.FirstOrDefault(o => o != k && o.Route == FpRoute.Band && o.Item == k.Item && o.Source == k.Source && o.TailOf == null && o.Target != null && o.Target.Dir == Dir.S && o.To.Column != null && o.To.Column.Index == 1 && !o.To.FinalCell);
                     if (host != null) { k.TailOf = host; Note("rule 12: " + N(k.Item) + " to the dedicated machine continues from the lane end of " + host.To.Name); }
                 }
-            // band: one lane per item; an item whose span is enclosed by another's gets the lower lane (fewer crossings)
+            // band: one lane per source (item + its producer part, K); a lane whose span is enclosed by another's gets the lower row (fewer crossings)
             var band = conns.Where(c => c.Route == FpRoute.Band).ToList();
+            var srcNo = new Dictionary<Port, int>();
+            foreach (FpConnection c in band) if (!srcNo.ContainsKey(c.Source)) srcNo[c.Source] = srcNo.Keys.Count(p => p.Item == c.Item);
+            Func<FpConnection, int> K = c => c.Item * 100 + srcNo[c.Source];
             var span = new Dictionary<int, int[]>();
             foreach (FpConnection c in band)
             {
-                int[] s; if (!span.TryGetValue(c.Item, out s)) { s = new[] { int.MaxValue, int.MinValue }; span[c.Item] = s; }
+                int[] s; if (!span.TryGetValue(K(c), out s)) { s = new[] { int.MaxValue, int.MinValue }; span[K(c)] = s; }
                 s[0] = Math.Min(s[0], Math.Min(c.Source.X, c.Target.X)); s[1] = Math.Max(s[1], Math.Max(c.Source.X, c.Target.X));
             }
             // a band row cannot bridge a vertical lane one tile from its own corner (ramp foot on a corner, P13): when item j's vertical
@@ -784,7 +829,7 @@ public static class Floorplan
             foreach (int it in span.Keys)
             {
                 var set = new HashSet<int>();
-                foreach (FpConnection c in band.Where(c => c.Item == it))
+                foreach (FpConnection c in band.Where(c => K(c) == it))
                 {
                     set.Add(c.Source.NextX);
                     if (c.TailOf == null) set.Add(c.Target.PrevX);
@@ -809,11 +854,16 @@ public static class Floorplan
                 if (ts.Count < 2) continue;
                 int sx = g.Key.NextX, x1 = ts[0].Target.PrevX, x2 = ts[1].Target.PrevX;
                 bool same = Math.Sign(x1 - sx) == Math.Sign(x2 - sx) && x1 != sx;
-                if (!forkX.ContainsKey(ts[0].Item)) forkX[ts[0].Item] = new HashSet<int>();
-                forkX[ts[0].Item].Add(same ? x1 : sx);
+                // same side, but the nearer lane has a foreign vertical beside it (a fork over it could neither be cleared nor crossed):
+                // the splitter goes on top of the rise instead (FpConnection.ForkNorth, needs the nearer consumer 2 tiles from the rise)
+                bool north = same && ts.Count == 2 && Math.Abs(x1 - sx) >= 2 && Math.Abs(x2 - sx) >= 2 && Math.Abs(x2 - x1) >= 1
+                    && span.Keys.Any(j => j != K(ts[0]) && (ends[j].Contains(x1 - 1) || ends[j].Contains(x1 + 1)));
+                if (north) foreach (FpConnection t in ts) t.ForkNorth = true;
+                if (!forkX.ContainsKey(K(ts[0]))) forkX[K(ts[0])] = new HashSet<int>();
+                forkX[K(ts[0])].Add(same && !north ? x1 : sx);
             }
             var threeWay = new HashSet<int>(band.Where(c => c.TailOf == null).GroupBy(c => c.Source)
-                .Where(g => g.Count() == 3 && g.Any(c => c.Target.PrevX < g.Key.NextX) && g.Any(c => c.Target.PrevX > g.Key.NextX)).Select(g => g.Key.Item));
+                .Where(g => g.First().ForkNorth || (g.Count() == 3 && g.Any(c => c.Target.PrevX < g.Key.NextX) && g.Any(c => c.Target.PrevX > g.Key.NextX))).Select(g => K(g.First())));
             var gaps = new Dictionary<long, int>();   // (a,b) -> a above b with at least this many rows (2 = one free row, 3 = the belt under a splitter is bridgeable: two rows below it are not plain chain tiles)
             Func<int, int, long> gk = (a, b) => ((long)a << 32) | (uint)b;
             var crossOnly = new HashSet<long>();
@@ -851,7 +901,7 @@ public static class Floorplan
             while (remaining.Count > 0)
             {
                 int it = remaining.FirstOrDefault(i => mustAbove[i].All(j => !remaining.Contains(j) || j == i));
-                if (it == 0) { it = remaining[0]; Note("band: lane order constraints for " + N(it) + " form a cycle (a crossing next to a corner may be refused)"); }
+                if (it == 0) { it = remaining[0]; Note("band: lane order constraints for " + N(it / 100) + " form a cycle (a crossing next to a corner may be refused)"); }
                 remaining.Remove(it);
                 int[] s = span[it];
                 int minLane = mustAbove[it].Where(j => laneOf.ContainsKey(j)).Select(j => { int g; return laneOf[j] + (gaps.TryGetValue(gk(it, j), out g) ? g : 1); }).DefaultIfEmpty(0).Max();
@@ -868,7 +918,7 @@ public static class Floorplan
             var sources = new List<Port>();
             foreach (FpConnection c in band)
             {
-                c.Slot = laneOf[c.Item];
+                c.Slot = laneOf[K(c)];
                 int g = sources.IndexOf(c.Source);
                 if (g < 0) { g = sources.Count; sources.Add(c.Source); }
                 c.Group = g;
@@ -881,19 +931,19 @@ public static class Floorplan
                 bool fork = band.Count(o => o.Source == c.Source && o.TailOf == null) > 1;
                 int need = c.Target.Dir == Dir.S ? c.Target.Y + (fork ? 3 : 2) : c.Target.Y + 1;
                 if (fork) need = Math.Max(need, c.Source.NextY + 2);   // a splitter on top of the rise: its input belts need the two rows below it
-                fp.BandY0 = Math.Max(fp.BandY0, need - laneOf[c.Item]);
+                fp.BandY0 = Math.Max(fp.BandY0, need - laneOf[K(c)]);
             }
             foreach (int it in laneOf.Keys.OrderBy(it => laneOf[it]).ThenBy(it => span[it][0]))
             {
-                var tg = band.Where(c => c.Item == it).Select(c => c.To.Name).Distinct().ToArray();
-                Note("band lane " + laneOf[it] + " (y" + (fp.BandY0 + laneOf[it]) + "): " + N(it) + " x" + span[it][0] + ".." + span[it][1] + " -> " + string.Join(", ", tg) + (tg.Length > 2 ? " (2-way fork + third consumer from the lane tail, rule 8)" : tg.Length == 2 ? " (one 2-way fork, rule 8)" : "")
+                var tg = band.Where(c => K(c) == it).Select(c => c.To.Name).Distinct().ToArray();
+                Note("band lane " + laneOf[it] + " (y" + (fp.BandY0 + laneOf[it]) + "): " + N(it / 100) + " x" + span[it][0] + ".." + span[it][1] + " -> " + string.Join(", ", tg) + (tg.Length > 2 ? " (2-way fork + third consumer from the lane tail, rule 8)" : tg.Length == 2 ? " (one 2-way fork, rule 8)" : "")
                     + (laneSpans[laneOf[it]].Count > 1 ? " [row shared, spans disjoint]" : ""));
             }
             // rule 2 (not laid in this flat version): lanes whose only consumer is the final machine form one z-stacked bus row
             if (cellRow != null)
             {
-                var bus = laneOf.Keys.Where(it => band.Where(c => c.Item == it).All(c => c.To == cellRow.Row)).ToList();
-                if (bus.Count > 1) Note("rule 2: " + string.Join(", ", bus.Select(it => N(it)).ToArray()) + " all end at the final machine; z-stacked (0 / 0.5 / 1, later-joining higher) they are one bus row -> " + (fp.BandLanes - bus.Count + 1) + " band rows instead of " + fp.BandLanes + " (flat rows kept here)");
+                var bus = laneOf.Keys.Where(it => band.Where(c => K(c) == it).All(c => c.To == cellRow.Row)).ToList();
+                if (bus.Count > 1) Note("rule 2: " + string.Join(", ", bus.Select(it => N(it / 100)).ToArray()) + " all end at the final machine; z-stacked (0 / 0.5 / 1, later-joining higher) they are one bus row -> " + (fp.BandLanes - bus.Count + 1) + " band rows instead of " + fp.BandLanes + " (flat rows kept here)");
             }
             // comb: tails on the south edge, grouped by target column (west -> east), pitch 1 inside a group
             var comb = conns.Where(c => c.Route == FpRoute.Comb).ToList();
@@ -917,7 +967,7 @@ public static class Floorplan
             }
             fp.CombTails = comb.Count;
             if (comb.Count > 0) Note("comb: " + comb.Count + " tail(s) on y" + fp.CombY + " at x " + string.Join(",", comb.OrderBy(c => c.Slot).Select(c => I(c.Slot)).ToArray()));
-            Note("band: " + fp.BandLanes + " lane(s) from y" + fp.BandY0 + "; consumer lanes fed from the band flow S (FpConnection.TargetFlow; rows built with Flow N until RowSpec.LaneFlows lands)");
+            Note("band: " + fp.BandLanes + " lane(s) from y" + fp.BandY0 + "; consumer lanes fed from the band flow S (RowSpec.InputFlows)");
             fp.Connections.AddRange(conns);
         }
     }

@@ -57,7 +57,7 @@ public static class FloorplanComposer
             }
         }
         notes.AddRange(bestNotes);
-        notes.AddRange(trace.Take(40));
+        notes.AddRange(trace.Take(8));
         if (tries > 1) notes.Add("floorplan composer: " + tries + " attempts (row mirrors forced: " + force.Count + "), " + bestScore + " problem(s) left");
         return best;
     }
@@ -82,6 +82,7 @@ public static class FloorplanComposer
         {
             FpPlan fp = Floorplan.Build(gd, spec, plan, force);
             notes.AddRange(fp.Notes);
+            if (EngineTuning.DebugNotes) notes.AddRange(fp.Summary(gd).Split(new[] { (char)10 }, StringSplitOptions.RemoveEmptyEntries).Select(s => "fp: " + s.TrimEnd((char)13)));
             if (!fp.Ok) { foreach (string e in fp.Errors) fail(e); return layout; }
 
             Layout work = new Layout(gd);

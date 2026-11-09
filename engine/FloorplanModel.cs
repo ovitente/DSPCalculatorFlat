@@ -66,6 +66,9 @@ public class FpConnection
     /// Band connection fed from the dead end of another connection's target lane (rule 8 / 12: "one lane past several
     /// consumers", useredit3 iron ingot x=15: motors then gear). Null = fed through the band row or a fork.
     public FpConnection TailOf;
+    /// Band fork of 2 consumers on one side whose nearer lane has a foreign vertical beside it: the splitter sits on top of the rise
+    /// (outputs toward them and N, the N branch runs two rows higher to the farther consumer) instead of over the nearer lane.
+    public bool ForkNorth;
     // ---- filled by Bands.Lay (additive, read by the assembly step) ----
     /// Chain name of the laid belts ("band:<item>#k", "comb:<item>#k", "straight:<item>#k", "merge:<item>#k").
     public string Chain;

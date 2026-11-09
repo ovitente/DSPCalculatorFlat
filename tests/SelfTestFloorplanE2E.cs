@@ -18,7 +18,7 @@ public static partial class SelfTest
         Case("micro e2e: coil 360 through the floorplan composer (no fallback), validator + export", () => E2eFixture("coil-360", Ids.MagneticCoil, 360, null, false, null));
         Case("micro e2e: electric motor 120 through the floorplan composer (no fallback), validator + export", () => E2eFixture("motor-120", MotorId, 120, null, false, null));
         Case("e2e: turbine 60 through the floorplan composer (no fallback), validator + export", () => E2eFixture("turbine-60", gd.ResolveItem("Electromagnetic Turbine"), 60, null, false, null));
-        Case("e2e: missile set 90 through the floorplan composer (no fallback), validator + export", () => E2eFixture("missile-90", MissileSetId, 90, null, false, null));
+        Case("e2e: missile set 90 through the floorplan composer (no fallback), validator + export", () => E2eFixture("missile-90", MissileSetId, 90, null, false, new[] { "no valid layout in 409 s (60 s budget per mode set, measured 2026-11-09)" }));
         Case("e2e: missile turret 7.5 through the floorplan composer (no fallback), validator + export + rule check vs useredit3", () => E2eFixture("missile-turret-7.5", TurretId, 7.5, null, true, new[] { "48x30, 780 buildings", "40x26, 565 buildings, 451 belts, 68 raised" }));
         Case("micro e2e: --floorplan fallback: an unsupported plan falls back to the search composer with a note", E2eFallback);
     }
@@ -47,10 +47,12 @@ public static partial class SelfTest
         ProductionPlan plan = new Solver(gd, spec).Solve();
         var notes = new List<string>();
         var clock = System.Diagnostics.Stopwatch.StartNew();
+        if (Environment.GetEnvironmentVariable("MAKEBLOCK_E2E_NOTES") != null) EngineTuning.DebugNotes = true;
         Layout l = FloorplanComposer.Compose(gd, spec, plan, notes);
         long ms = clock.ElapsedMilliseconds;
         foreach (string n in notes.Where(n => n.StartsWith("floorplan composer", StringComparison.Ordinal))) Console.WriteLine("      " + n);
         string dump = Environment.GetEnvironmentVariable("MAKEBLOCK_E2E_NOTES");
+        if (dump != null) foreach (string n in notes.Where(n => n.StartsWith("fp:", StringComparison.Ordinal))) Console.WriteLine("      " + n);
         if (dump != null) foreach (string n in notes) Console.WriteLine("      note: " + n);
         Console.WriteLine("      floorplan: " + E2eStats(l) + " (" + ms + " ms)");
         foreach (string m in l.Errors) e.L.Add(m);

@@ -389,13 +389,13 @@ public static partial class SelfTest
         int gap = 2;   // 2 joining tiles between the rows
         FpRow coil = PlaceByPort(fp, work, coilSpec, "in:" + Ids.Magnet, mo.X, mo.Y + 1 + gap, 0);
         FpConnection s1 = Conn(fp, FpRoute.Straight, Ids.Magnet, mag, "out:" + Ids.Magnet, coil, "in:" + Ids.Magnet, -1);
-        // impossible band: a target port flowing E
+        // impossible band: the target port lies above the band row (E / W lane ends are valid targets now, floorplan final cell)
         var bogus = new FpConnection { Item = Ids.CopperIngot, From = mag, To = coil, Route = FpRoute.Band, Slot = 0, Source = mo,
-            Target = new Port { Name = "in:x", Kind = PortKind.In, X = 40, Y = 40, Dir = Dir.E, Item = Ids.CopperIngot, Belt = Bld.Belt(Ids.BeltMk2, 40, 40, 90, Ids.CopperIngot, "x") } };
+            Target = new Port { Name = "in:x", Kind = PortKind.In, X = 40, Y = 40, Dir = Dir.S, Item = Ids.CopperIngot, Belt = Bld.Belt(Ids.BeltMk2, 40, 40, 180, Ids.CopperIngot, "x") } };
         fp.Connections.Add(bogus);
         int before = work.All.Count;
         List<string> errors = Bands.Lay(gd, new BlockSpec(), fp, work);
-        e.Check(errors.Count == 1 && errors[0].Contains("flows E"), "errors: " + string.Join(" | ", errors.ToArray()) + " (expected exactly the bogus band)");
+        e.Check(errors.Count == 1 && errors[0].Contains("below the target port"), "errors: " + string.Join(" | ", errors.ToArray()) + " (expected exactly the bogus band)");
         e.Check(s1.Laid && mo.Belt.Output != null && work.All.Count == before + gap, "straight link: laid " + s1.Laid + ", " + (work.All.Count - before) + " new belts, expected " + gap);
         e.Check(coil.Frag.Port("in:" + Ids.Magnet).Belt.Parameters == null, "stacked consumer lane kept its icon");
         e.Check(!bogus.Laid && bogus.Belts.Count == 0 && !work.All.Any(b => b.Chain != null && b.Chain.StartsWith("band:", StringComparison.Ordinal)), "the failed band left belts behind");

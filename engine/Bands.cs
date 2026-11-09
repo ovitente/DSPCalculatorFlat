@@ -546,6 +546,7 @@ public static class Bands
             public List<TargetGeo> Targets = new List<TargetGeo>();
             public bool Fork;                    // 2-way splitter
             public int Fx;                       // splitter x on the band row
+            public bool NorthBranch;             // 2 consumers on one side: splitter on the rise, outputs toward them and N; the N branch runs on the row yb + 2 to the farther one
             public bool ThreeWay;                // 3 consumers on both sides: splitter at (sx, yb) with outputs W, E and N, the N branch runs on the row yb + 2 (useredit3 copper (28,17))
             public bool SplitOnRise;             // splitter at (sx, yb), input from S, outputs W and E
             public Dir SplitIn;                  // input side of the splitter (W / E / S)
@@ -579,6 +580,7 @@ public static class Bands
             }
             // FLOORPLAN: a port flowing E / W (final cell N-face lane, rule-11 lane ends): descend into its upstream tile, in the first
             // free column going away from it (useredit3: N-face lane x=5 down to (5,14); copper x=0 down to (0,5) then east)
+            if (yTop < t.PrevY) { why = "band row is below the target port " + At(t.X, t.Y); return null; }
             int step = t.Dir == Dir.W ? 1 : -1;
             for (int k = 0; k <= 6; k++)
             {
@@ -626,6 +628,18 @@ public static class Bands
                 if (far.Descent == null) { err = "3-way fork: " + why; return null; }
                 far.Xd = xd;
                 gg.Fork = true; gg.ThreeWay = true; gg.SplitOnRise = true; gg.Fx = gg.Sx; gg.SplitIn = Dir.S;
+            }
+            else if (n == 2 && g.Conns[0].ForkNorth)
+            {
+                // Floorplan: the nearer lane has a foreign vertical beside it. Splitter on top of the rise, outputs toward the consumers and N; the N branch
+                // runs on the row yb + 2 to the farther consumer
+                TargetGeo near = gg.Targets[0], far = gg.Targets[1];
+                if (Math.Abs(near.Xd - gg.Sx) < 2) { err = "north fork: the consumer column x" + near.Xd + " is less than 2 tiles from the splitter x" + gg.Sx; return null; }
+                string why; int xd;
+                far.Descent = DescentTiles(far.Conn.Target, gg.Yb + 1, out xd, out why);
+                if (far.Descent == null) { err = "north fork: " + why; return null; }
+                far.Xd = xd;
+                gg.Fork = true; gg.NorthBranch = true; gg.SplitOnRise = true; gg.Fx = gg.Sx; gg.SplitIn = Dir.S;
             }
             else if (n >= 2)
             {
@@ -716,7 +730,7 @@ public static class Bands
             // fork: splitter cell
             TargetGeo t1 = gg.Targets[0], t2 = gg.Targets[1];
             Dir out1 = gg.SplitOnRise ? (t1.Xd < gg.Sx ? Dir.W : Dir.E) : Dir.S;
-            Dir out2 = gg.SplitOnRise ? (t2.Xd < gg.Sx ? Dir.W : Dir.E) : (t2.Xd > gg.Fx ? Dir.E : Dir.W);
+            Dir out2 = gg.NorthBranch ? Dir.N : gg.SplitOnRise ? (t2.Xd < gg.Sx ? Dir.W : Dir.E) : (t2.Xd > gg.Fx ? Dir.E : Dir.W);
             string clear = SplitterClear(gg.Fx, yb, all);
             if (clear != null) { fail("bands: " + Who(t1.Conn) + ": splitter at " + At(gg.Fx, yb) + ": " + clear); return; }
             Fragment sf;
@@ -772,7 +786,7 @@ public static class Bands
             List<Bld> h2;
             {
                 string why; Plan used;
-                var p = new Plan { Tiles = Path(po2.NextX, po2.NextY, t2.Xd, yb), LinkFrom = po2.Belt, LinkTo = t2.DescentFirst };
+                var p = new Plan { Tiles = Path(po2.NextX, po2.NextY, t2.Xd, po2.NextY), LinkFrom = po2.Belt, LinkTo = t2.DescentFirst };
                 h2 = TryPlans(new[] { p }, chain, g.Item, "band " + g.Item, out why, out used);
                 if (h2 == null) { undoSplit(); Unlay(h1, gg.RiseLast); fail("bands: " + Who(t2.Conn) + ": band row y" + yb + " from the splitter to x" + t2.Xd + " cannot be laid: " + why); return; }
             }

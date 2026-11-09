@@ -97,8 +97,9 @@ public static partial class SelfTest
         // user's z-stacked bus (rule 2) merges the lanes that only go to the final machine (motor, engine) into one row -> 4
         var bandItems = fp.Connections.Where(k => k.Route == FpRoute.Band).Select(k => k.Item).Distinct().ToList();
         int busItems = bandItems.Count(it => fp.Connections.Where(k => k.Route == FpRoute.Band && k.Item == it).All(k => k.To.FinalCell));
-        int rule2Rows = fp.BandLanes - Math.Max(0, busItems - 1);
-        e.Check(fp.BandLanes >= 1 && fp.BandLanes <= 5 && rule2Rows <= 4, fp.BandLanes + " flat band rows, " + rule2Rows + " with the rule-2 bus (want <= 5 flat, <= 4 stacked)");
+        int usedRows = fp.Connections.Where(k => k.Route == FpRoute.Band).Select(k => k.Slot).Distinct().Count();   // reserved guard rows (fork clearance, 3-way branch) do not carry a lane
+        int rule2Rows = usedRows - Math.Max(0, busItems - 1);
+        e.Check(usedRows >= 1 && usedRows <= 5 && rule2Rows <= 4, usedRows + " band rows carrying lanes (" + fp.BandLanes + " reserved), " + rule2Rows + " with the rule-2 bus (want <= 5 flat, <= 4 stacked)");
         // steel-like dedicated feeders are not band lanes; iron ingot and copper ingot have several consumers -> band
         e.Check(fp.Connections.Any(k => k.Route == FpRoute.Band && k.Item == Ids.IronIngot) && fp.Connections.Any(k => k.Route == FpRoute.Band && k.Item == Ids.CopperIngot), "iron / copper ingot not on the band");
         // a column's gap is 0 everywhere except a possible corridor after the final cell
